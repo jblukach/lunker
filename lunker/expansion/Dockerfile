@@ -1,4 +1,4 @@
-### 2.172.0 (build 0f666c5) ###
+### warcio v1.7.5 ###
 
 FROM public.ecr.aws/docker/library/python:latest
 
