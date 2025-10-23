@@ -6,7 +6,7 @@ from boto3.dynamodb.conditions import Key
 
 def handler(event, context):
 
-    headers = {'User-Agent': 'Lunker Zero a.k.a. LZ (https://github.com/jblukach/lunkerzero)'}
+    headers = {'User-Agent': 'Lunker - https://github.com/jblukach/lunker'}
     response = requests.get('https://data.iana.org/TLD/tlds-alpha-by-domain.txt', headers=headers)
     data = response.text
 
