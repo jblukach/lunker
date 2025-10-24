@@ -123,7 +123,7 @@ class LunkerAPI(Stack):
 
         authorizer = _authorizers.HttpJwtAuthorizer(
             'authorizer',
-            jwt_issuer = 'https://lunker.us.frontegg.com',
+            jwt_issuer = 'https://login.lukach.net',
             jwt_audience = [
                 clientid.string_value
             ]
