@@ -165,3 +165,19 @@ class LunkerAPI(Stack):
                 )
             )
         )
+
+        cnameacm = _route53.CnameRecord(
+            self, 'cnameacm',
+            record_name = '_2002d7fc0bdbfe39431fd9a68d036f72.login.lukach.net.',
+            zone = hostzone,
+            domain_name = '_37a6a6096b5abdb6e5d414268b538b81.xlfgrmvvlj.acm-validations.aws.',
+            ttl = Duration.seconds(300)
+        )
+
+        cnamecdn = _route53.CnameRecord(
+            self, 'cnamecdn',
+            record_name = 'login.lukach.net',
+            zone = hostzone,
+            domain_name = 'di6hvr0bdm7km.cloudfront.net',
+            ttl = Duration.seconds(300)
+        )
