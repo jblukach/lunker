@@ -3,22 +3,10 @@ import os
 
 import aws_cdk as cdk
 
-from lunker.lunker_api import LunkerAPI
 from lunker.lunker_tld import LunkerTLD
 from lunker.lunker_ui import LunkerUI
 
 app = cdk.App()
-
-LunkerAPI(
-    app, 'LunkerAPI',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-1'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = '4n6ir'
-    )
-)
 
 LunkerTLD(
     app, 'LunkerTLD',

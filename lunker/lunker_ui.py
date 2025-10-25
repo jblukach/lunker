@@ -21,6 +21,13 @@ class LunkerUI(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+    ### SSM PARAMETER ###
+
+        projectid = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'projectid',
+            parameter_name = '/descope/projectid'
+        )
+
     ### IAM ROLE ###
 
         role = _iam.Role(
@@ -47,7 +54,30 @@ class LunkerUI(Stack):
             )
         )
 
-    ### LAMBDA FUNCTIONS ###
+    ### AUTH LAMBDA ###
+
+        auth = _lambda.Function(
+            self, 'auth',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('auth'),
+            handler = 'auth.handler',
+            environment = {
+                'PROJECT_ID': projectid.string_value
+            },
+            timeout = Duration.seconds(7),
+            memory_size = 128,
+            role = role
+        )
+
+        authlogs = _logs.LogGroup(
+            self, 'authlogs',
+            log_group_name = '/aws/lambda/'+auth.function_name,
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+    ### ROOT LAMBDA ###
 
         root = _lambda.Function(
             self, 'root',
@@ -55,6 +85,9 @@ class LunkerUI(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('root'),
             handler = 'root.handler',
+            environment = {
+                'PROJECT_ID': projectid.string_value
+            },
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role
@@ -96,7 +129,13 @@ class LunkerUI(Stack):
             certificate = acm
         )
 
-    ### API INTEGRATIONS ###
+    ### AUTH INTEGRATION ###
+
+        authintegration = _integrations.HttpLambdaIntegration(
+            'authintegration', auth
+        )
+
+    ### ROOT INTEGRATION ###
 
         integration = _integrations.HttpLambdaIntegration(
             'integration', root
@@ -114,15 +153,25 @@ class LunkerUI(Stack):
 
     ### API AUTHORIZER ###
 
-        #authorizer = _authorizers.HttpJwtAuthorizer(
-        #    'authorizer',
-        #    jwt_issuer = 'https://login.lukach.net',
-        #    jwt_audience = [
-        #        clientid.string_value
-        #    ]
-        #)
+        descope = _authorizers.HttpJwtAuthorizer(
+            'descope',
+            jwt_issuer = 'https://api.descope.com/'+projectid.string_value,
+            jwt_audience = [
+                projectid.string_value
+            ]
+        )
 
-    ### API ROUTES ###
+    ### AUTH ROUTE ###
+
+        api.add_routes(
+            path = '/auth',
+            methods = [
+                _api.HttpMethod.GET
+            ],
+            integration = authintegration,
+        )
+
+    ### ROOT ROUTE ###
 
         api.add_routes(
             path = '/',
@@ -130,7 +179,7 @@ class LunkerUI(Stack):
                 _api.HttpMethod.GET
             ],
             integration = integration,
-            #authorizer = authorizer
+            authorizer = descope
         )
 
     ### DNS RECORDS ###
