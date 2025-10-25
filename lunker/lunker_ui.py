@@ -16,7 +16,7 @@ from aws_cdk import (
 
 from constructs import Construct
 
-class LunkerAPI(Stack):
+class LunkerUI(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -84,7 +84,7 @@ class LunkerAPI(Stack):
 
         acm = _acm.Certificate(
             self, 'acm',
-            domain_name = 'api.lukach.net',
+            domain_name = 'lunker.lukach.net',
             validation = _acm.CertificateValidation.from_dns(hostzone)
         )
 
@@ -92,7 +92,7 @@ class LunkerAPI(Stack):
 
         domain = _api.DomainName(
             self, 'domain',
-            domain_name = 'api.lukach.net',
+            domain_name = 'lunker.lukach.net',
             certificate = acm
         )
 
@@ -106,7 +106,7 @@ class LunkerAPI(Stack):
 
         api = _api.HttpApi(
             self, 'api',
-            description = 'api.lukach.net',
+            description = 'lunker.lukach.net',
             default_domain_mapping = _api.DomainMappingOptions(
                 domain_name = domain
             )
@@ -138,7 +138,7 @@ class LunkerAPI(Stack):
         dns4 = _route53.ARecord(
             self, 'dns4',
             zone = hostzone,
-            record_name = 'api.lukach.net',
+            record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
                     domain.regional_domain_name,
@@ -150,7 +150,7 @@ class LunkerAPI(Stack):
         dns6 = _route53.AaaaRecord(
             self, 'dns6',
             zone = hostzone,
-            record_name = 'api.lukach.net',
+            record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
                     domain.regional_domain_name,
