@@ -66,32 +66,6 @@ class LunkerUI(Stack):
             )
         )
 
-    ### AUTH LAMBDA ###
-
-        auth = _lambda.Function(
-            self, 'auth',
-            runtime = _lambda.Runtime.PYTHON_3_13,
-            architecture = _lambda.Architecture.ARM_64,
-            code = _lambda.Code.from_asset('auth'),
-            handler = 'auth.handler',
-            environment = {
-                'PROJECT_ID': projectid.string_value
-            },
-            timeout = Duration.seconds(7),
-            memory_size = 128,
-            role = role,
-            layers = [
-                descope
-            ]
-        )
-
-        authlogs = _logs.LogGroup(
-            self, 'authlogs',
-            log_group_name = '/aws/lambda/'+auth.function_name,
-            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
-            removal_policy = RemovalPolicy.DESTROY
-        )
-
     ### ROOT LAMBDA ###
 
         root = _lambda.Function(
@@ -147,12 +121,6 @@ class LunkerUI(Stack):
             certificate = acm
         )
 
-    ### AUTH INTEGRATION ###
-
-        authintegration = _integrations.HttpLambdaIntegration(
-            'authintegration', auth
-        )
-
     ### ROOT INTEGRATION ###
 
         integration = _integrations.HttpLambdaIntegration(
@@ -179,16 +147,6 @@ class LunkerUI(Stack):
             ]
         )
 
-    ### AUTH ROUTE ###
-
-        api.add_routes(
-            path = '/auth',
-            methods = [
-                _api.HttpMethod.GET
-            ],
-            integration = authintegration,
-        )
-
     ### ROOT ROUTE ###
 
         api.add_routes(
@@ -197,7 +155,6 @@ class LunkerUI(Stack):
                 _api.HttpMethod.GET
             ],
             integration = integration,
-            authorizer = descope
         )
 
     ### DNS RECORDS ###
