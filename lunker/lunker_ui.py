@@ -21,6 +21,18 @@ class LunkerUI(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+    ### LAMBDA LAYERS ###
+
+        pkgdescope = _ssm.StringParameter.from_string_parameter_arn(
+            self, 'pkgdescope',
+            'arn:aws:ssm:us-east-1:070176467818:parameter/pkg/descope'
+        )
+
+        descope = _lambda.LayerVersion.from_layer_version_arn(
+            self, 'descope',
+            layer_version_arn = pkgdescope.string_value
+        )
+
     ### SSM PARAMETER ###
 
         projectid = _ssm.StringParameter.from_string_parameter_attributes(
@@ -67,7 +79,10 @@ class LunkerUI(Stack):
             },
             timeout = Duration.seconds(7),
             memory_size = 128,
-            role = role
+            role = role,
+            layers = [
+                descope
+            ]
         )
 
         authlogs = _logs.LogGroup(
@@ -90,7 +105,10 @@ class LunkerUI(Stack):
             },
             timeout = Duration.seconds(7),
             memory_size = 128,
-            role = role
+            role = role,
+            layers = [
+                descope
+            ]
         )
 
         logs = _logs.LogGroup(
