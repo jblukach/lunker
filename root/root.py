@@ -4,13 +4,7 @@ def handler(event, context):
 
     html = """<!DOCTYPE html>
 	<html>
-  		<head>
-			<script src="https://descopecdn.com/npm/@descope/web-js-sdk@1.16.0/dist/index.umd.js"></script>
-  		</head>
   		<body>
-			<script>
-                sdk.refresh()
-			</script>
             <h1>Hello from Root!</h1>
 		</body>
 	</html>"""
