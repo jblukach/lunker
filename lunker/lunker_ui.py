@@ -2,9 +2,7 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     Stack,
-    aws_apigatewayv2 as _api,
-    aws_apigatewayv2_authorizers as _authorizers,
-    aws_apigatewayv2_integrations as _integrations,
+    aws_apigateway as _api,
     aws_certificatemanager as _acm,
     aws_iam as _iam,
     aws_lambda as _lambda,
@@ -20,25 +18,6 @@ class LunkerUI(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
-
-    ### LAMBDA LAYERS ###
-
-        pkgdescope = _ssm.StringParameter.from_string_parameter_arn(
-            self, 'pkgdescope',
-            'arn:aws:ssm:us-east-1:070176467818:parameter/pkg/descope'
-        )
-
-        descope = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'descope',
-            layer_version_arn = pkgdescope.string_value
-        )
-
-    ### SSM PARAMETER ###
-
-        projectid = _ssm.StringParameter.from_string_parameter_attributes(
-            self, 'projectid',
-            parameter_name = '/descope/projectid'
-        )
 
     ### IAM ROLE ###
 
@@ -66,7 +45,7 @@ class LunkerUI(Stack):
             )
         )
 
-    ### ROOT LAMBDA ###
+    ### LAMBDA FUNCTION ###
 
         root = _lambda.Function(
             self, 'root',
@@ -74,19 +53,13 @@ class LunkerUI(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('root'),
             handler = 'root.handler',
-            environment = {
-                'PROJECT_ID': projectid.string_value
-            },
             timeout = Duration.seconds(7),
             memory_size = 128,
-            role = role,
-            layers = [
-                descope
-            ]
+            role = role
         )
 
-        logs = _logs.LogGroup(
-            self, 'logs',
+        rootlogs = _logs.LogGroup(
+            self, 'rootlogs',
             log_group_name = '/aws/lambda/'+root.function_name,
             retention = _logs.RetentionDays.THIRTEEN_MONTHS,
             removal_policy = RemovalPolicy.DESTROY
@@ -103,7 +76,7 @@ class LunkerUI(Stack):
              self, 'hostzone',
              hosted_zone_id = hostzoneid.string_value,
              zone_name = 'lukach.net'
-        )
+        ) 
 
     ### ACM CERTIFICATE ###
 
@@ -115,70 +88,104 @@ class LunkerUI(Stack):
 
     ### DOMAIN NAME ###
 
-        domain = _api.DomainName(
+        domain = _api.CfnDomainName(
             self, 'domain',
+            certificate_arn = acm.certificate_arn,
             domain_name = 'lunker.lukach.net',
-            certificate = acm
+            endpoint_configuration = _api.CfnDomainName.EndpointConfigurationProperty(
+                ip_address_type = 'dualstack',
+                types = [
+                    'EDGE'
+                ]
+            )
         )
 
-    ### ROOT INTEGRATION ###
+    ### API INTEGRATION ###
 
-        integration = _integrations.HttpLambdaIntegration(
-            'integration', root
+        rootintegration = _api.LambdaIntegration(
+            root,
+            proxy = True, 
+            integration_responses = [
+                _api.IntegrationResponse(
+                    status_code = '200',
+                    response_parameters = {
+                        'method.response.header.Access-Control-Allow-Origin': "'*'"
+                    }
+                )
+            ]
         )
 
     ### API GATEWAY ###
 
-        api = _api.HttpApi(
+        api = _api.RestApi(
             self, 'api',
             description = 'lunker.lukach.net',
-            default_domain_mapping = _api.DomainMappingOptions(
-                domain_name = domain
+            cloud_watch_role = True,
+            cloud_watch_role_removal_policy = RemovalPolicy.DESTROY,
+            deploy_options = _api.StageOptions(
+                access_log_destination = _api.LogGroupLogDestination(
+                    _logs.LogGroup(
+                        self, 'apigwlogs',
+                        log_group_name = '/aws/apigateway/lunker',
+                        retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+                        removal_policy = RemovalPolicy.DESTROY
+                    )
+                ),
+                access_log_format = _api.AccessLogFormat.clf(),
+                logging_level = _api.MethodLoggingLevel.INFO,
+                data_trace_enabled = True
+            ),
+            endpoint_configuration = _api.EndpointConfiguration(
+                types = [
+                    _api.EndpointType.EDGE
+                ],
+                ip_address_type = _api.IpAddressType.DUAL_STACK
             )
         )
 
-    ### API AUTHORIZER ###
-
-        descope = _authorizers.HttpJwtAuthorizer(
-            'descope',
-            jwt_issuer = 'https://api.descope.com/'+projectid.string_value,
-            jwt_audience = [
-                projectid.string_value
+        api.root.add_method(
+            'GET',
+            rootintegration,
+            method_responses = [
+                _api.MethodResponse(
+                    status_code = '200',
+                    response_parameters = {
+                        'method.response.header.Access-Control-Allow-Origin': True
+                    }
+                )
             ]
         )
 
-    ### ROOT ROUTE ###
+    ### BASE PATH MAPPING ###
 
-        api.add_routes(
-            path = '/',
-            methods = [
-                _api.HttpMethod.GET
-            ],
-            integration = integration,
+        basepath = _api.BasePathMapping(
+            self, 'basepath',
+            domain_name = domain,
+            rest_api = api
         )
 
-    ### DNS RECORDS ###
+    ### DNS RECORDS ### attr_distribution_domain_name
 
-        dns4 = _route53.ARecord(
-            self, 'dns4',
+        dnsfour = _route53.ARecord(
+            self, 'dnsfour',
             zone = hostzone,
             record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
-                    domain.regional_domain_name,
-                    domain.regional_hosted_zone_id
+                    domain.attr_distribution_domain_name,
+                    domain.attr_distribution_hosted_zone_id
                 )
             )
         )
 
-        dns6 = _route53.AaaaRecord(
-            self, 'dns6',
+        dnssix = _route53.AaaaRecord(
+            self, 'dnssix',
             zone = hostzone,
             record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
-                    domain.regional_domain_name,
-                    domain.regional_hosted_zone_id
+                    domain.attr_distribution_domain_name,
+                    domain.attr_distribution_hosted_zone_id
                 )
             )
         )
