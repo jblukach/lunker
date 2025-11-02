@@ -4,6 +4,7 @@ from aws_cdk import (
     Stack,
     aws_apigateway as _api,
     aws_certificatemanager as _acm,
+    aws_cognito as _cognito,
     aws_iam as _iam,
     aws_lambda as _lambda,
     aws_logs as _logs,
@@ -18,6 +19,39 @@ class LunkerUI(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+    ### COGNITO ###
+
+        userpool = _cognito.UserPool(
+            self, 'userpool',
+            user_pool_name = 'lunker',
+            deletion_protection = True,
+            removal_policy = RemovalPolicy.RETAIN,
+            feature_plan = _cognito.FeaturePlan.PLUS,
+            standard_threat_protection_mode = _cognito.StandardThreatProtectionMode.AUDIT_ONLY,
+            self_sign_up_enabled = False,
+            sign_in_aliases = _cognito.SignInAliases(
+                email = True
+            ),
+            sign_in_case_sensitive = False,
+            sign_in_policy = _cognito.SignInPolicy(
+                allowed_first_auth_factors = _cognito.AllowedFirstAuthFactors(
+                    password = True,
+                    email_otp = True
+                )
+            ),
+            standard_attributes = _cognito.StandardAttributes(
+                fullname = _cognito.StandardAttribute(
+                    required = True,
+                    mutable = True
+                )
+            ),
+            auto_verify = _cognito.AutoVerifiedAttrs(
+                email = False,
+                phone = False
+            ),
+            mfa = _cognito.Mfa.OFF
+        )
 
     ### IAM ROLE ###
 
