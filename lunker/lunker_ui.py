@@ -23,6 +23,19 @@ class LunkerUI(Stack):
         account = Stack.of(self).account
         region = Stack.of(self).region
 
+    ### HOSTZONE ###
+
+        hostzoneid = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'hostzoneid',
+            parameter_name = '/network/hostzone'
+        )
+
+        hostzone = _route53.HostedZone.from_hosted_zone_attributes(
+             self, 'hostzone',
+             hosted_zone_id = hostzoneid.string_value,
+             zone_name = 'lukach.net'
+        )
+
     ### COGNITO USER POOL ###
 
         userpool = _cognito.UserPool(
@@ -41,7 +54,8 @@ class LunkerUI(Stack):
             sign_in_policy = _cognito.SignInPolicy(
                 allowed_first_auth_factors = _cognito.AllowedFirstAuthFactors(
                     password = True,
-                    email_otp = True
+                    email_otp = True,
+                    passkey = True
                 )
             ),
             standard_attributes = _cognito.StandardAttributes(
@@ -60,6 +74,23 @@ class LunkerUI(Stack):
                 device_only_remembered_on_user_prompt = False
             ),
             mfa = _cognito.Mfa.OFF
+        )
+
+    ### COGNITO ACM ###
+
+        cognitoacm = _acm.Certificate(
+            self, 'cognitoacm',
+            domain_name = 'hello.lukach.net',
+            validation = _acm.CertificateValidation.from_dns(hostzone)
+        )
+
+        userpool.add_domain(
+            'hellodomain',
+            custom_domain = _cognito.CustomDomainOptions(
+                domain_name = 'hello.lukach.net',
+                certificate = cognitoacm
+            ),
+            managed_login_version = _cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN
         )
 
     ### COGNITO LOGS ###
@@ -131,19 +162,6 @@ class LunkerUI(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
-    ### HOSTZONE ###
-
-        hostzoneid = _ssm.StringParameter.from_string_parameter_attributes(
-            self, 'hostzoneid',
-            parameter_name = '/network/hostzone'
-        )
-
-        hostzone = _route53.HostedZone.from_hosted_zone_attributes(
-             self, 'hostzone',
-             hosted_zone_id = hostzoneid.string_value,
-             zone_name = 'lukach.net'
-        ) 
-
     ### ACM CERTIFICATE ###
 
         acm = _acm.Certificate(
@@ -209,6 +227,13 @@ class LunkerUI(Stack):
             )
         )
 
+        authorizer = _api.CognitoUserPoolsAuthorizer(
+            self, 'authorizer',
+            cognito_user_pools = [
+                userpool
+            ]
+        )
+
         api.root.add_method(
             'GET',
             rootintegration,
@@ -219,7 +244,9 @@ class LunkerUI(Stack):
                         'method.response.header.Access-Control-Allow-Origin': True
                     }
                 )
-            ]
+            ],
+            authorizer = authorizer,
+            authorization_type = _api.AuthorizationType.COGNITO
         )
 
     ### BASE PATH MAPPING ###
