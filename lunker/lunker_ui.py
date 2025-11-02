@@ -20,7 +20,10 @@ class LunkerUI(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-    ### COGNITO ###
+        account = Stack.of(self).account
+        region = Stack.of(self).region
+
+    ### COGNITO USER POOL ###
 
         userpool = _cognito.UserPool(
             self, 'userpool',
@@ -29,6 +32,7 @@ class LunkerUI(Stack):
             removal_policy = RemovalPolicy.RETAIN,
             feature_plan = _cognito.FeaturePlan.PLUS,
             standard_threat_protection_mode = _cognito.StandardThreatProtectionMode.AUDIT_ONLY,
+            custom_threat_protection_mode = _cognito.CustomThreatProtectionMode.AUDIT_ONLY,
             self_sign_up_enabled = False,
             sign_in_aliases = _cognito.SignInAliases(
                 email = True
@@ -50,7 +54,35 @@ class LunkerUI(Stack):
                 email = False,
                 phone = False
             ),
+            account_recovery = _cognito.AccountRecovery.NONE,
+            device_tracking = _cognito.DeviceTracking(
+                challenge_required_on_new_device = True,
+                device_only_remembered_on_user_prompt = False
+            ),
             mfa = _cognito.Mfa.OFF
+        )
+
+    ### COGNITO LOGS ###
+
+        authenticationlogs = _logs.LogGroup(
+            self, 'authenticationlogs',
+            log_group_name = '/aws/cognito/lunker/authentication',
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+        authenticationlogsdelivery = _cognito.CfnLogDeliveryConfiguration(
+            self, 'authenticationlogsdelivery',
+            user_pool_id = userpool.user_pool_id,
+            log_configurations = [
+                _cognito.CfnLogDeliveryConfiguration.LogConfigurationProperty(
+                    cloud_watch_logs_configuration = _cognito.CfnLogDeliveryConfiguration.CloudWatchLogsConfigurationProperty(
+                        log_group_arn = 'arn:aws:logs:'+region+':'+account+':log-group:/aws/cognito/lunker/authentication'
+                    ),
+                    event_source = 'userAuthEvents',
+                    log_level = 'INFO'
+                )
+            ]
         )
 
     ### IAM ROLE ###
