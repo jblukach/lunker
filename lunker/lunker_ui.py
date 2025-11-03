@@ -73,7 +73,33 @@ class LunkerUI(Stack):
                 challenge_required_on_new_device = True,
                 device_only_remembered_on_user_prompt = False
             ),
+            passkey_user_verification = _cognito.PasskeyUserVerification.REQUIRED,
             mfa = _cognito.Mfa.OFF
+        )
+
+    ### COGNITO APP CLIENT ###
+
+        userpool.add_client(
+            'appclient',
+            user_pool_client_name = 'lunker',
+            prevent_user_existence_errors = True,
+            auth_flows = _cognito.AuthFlow(
+                user = True
+            ),
+            o_auth = _cognito.OAuthSettings(
+                default_redirect_uri = 'https://lunker.lukach.net',
+                callback_urls = [
+                    'https://hello.lukach.net',
+                    'https://lunker.lukach.net'
+                ],
+                flows = _cognito.OAuthFlows(
+                    authorization_code_grant = True
+                ),
+                scopes = [
+                    _cognito.OAuthScope.EMAIL,
+                    _cognito.OAuthScope.OPENID
+                ]
+            )
         )
 
     ### COGNITO ACM ###
