@@ -79,7 +79,7 @@ class LunkerUI(Stack):
 
     ### COGNITO APP CLIENT ###
 
-        userpool.add_client(
+        appclient = userpool.add_client(
             'appclient',
             user_pool_client_name = 'lunker',
             prevent_user_existence_errors = True,
@@ -100,6 +100,15 @@ class LunkerUI(Stack):
                     _cognito.OAuthScope.OPENID
                 ]
             )
+        )
+
+    #### COGNITO BRANDING ###
+
+        branding = _cognito.CfnManagedLoginBranding(
+            self, 'branding',
+            user_pool_id = userpool.user_pool_id,
+            client_id = appclient.user_pool_client_id,
+            use_cognito_provided_values = True
         )
 
     ### COGNITO ACM ###
