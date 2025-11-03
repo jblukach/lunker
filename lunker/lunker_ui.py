@@ -58,12 +58,6 @@ class LunkerUI(Stack):
                     passkey = True
                 )
             ),
-            standard_attributes = _cognito.StandardAttributes(
-                fullname = _cognito.StandardAttribute(
-                    required = True,
-                    mutable = True
-                )
-            ),
             auto_verify = _cognito.AutoVerifiedAttrs(
                 email = False,
                 phone = False
@@ -73,7 +67,7 @@ class LunkerUI(Stack):
                 challenge_required_on_new_device = True,
                 device_only_remembered_on_user_prompt = False
             ),
-            passkey_user_verification = _cognito.PasskeyUserVerification.REQUIRED,
+            passkey_user_verification = _cognito.PasskeyUserVerification.PREFERRED,
             mfa = _cognito.Mfa.OFF
         )
 
@@ -108,7 +102,7 @@ class LunkerUI(Stack):
             self, 'branding',
             user_pool_id = userpool.user_pool_id,
             client_id = appclient.user_pool_client_id,
-            use_cognito_provided_values = True
+            use_cognito_provided_values = True,
         )
 
     ### COGNITO ACM ###
@@ -119,13 +113,35 @@ class LunkerUI(Stack):
             validation = _acm.CertificateValidation.from_dns(hostzone)
         )
 
-        userpool.add_domain(
+    ### COGNITO DOMAIN ###
+
+        cognitodomain = userpool.add_domain(
             'hellodomain',
             custom_domain = _cognito.CustomDomainOptions(
                 domain_name = 'hello.lukach.net',
                 certificate = cognitoacm
             ),
             managed_login_version = _cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN
+        )
+
+    ### COGNITO DNS ###
+
+        cognitofour = _route53.ARecord(
+            self, 'cognitofour',
+            zone = hostzone,
+            record_name = 'hello.lukach.net',
+            target = _route53.RecordTarget.from_alias(
+                _r53targets.UserPoolDomainTarget(cognitodomain)
+            )
+        )
+
+        cognitofsix = _route53.AaaaRecord(
+            self, 'cognitofsix',
+            zone = hostzone,
+            record_name = 'hello.lukach.net',
+            target = _route53.RecordTarget.from_alias(
+                _r53targets.UserPoolDomainTarget(cognitodomain)
+            )
         )
 
     ### COGNITO LOGS ###
