@@ -90,7 +90,6 @@ class LunkerUI(Stack):
                     authorization_code_grant = True
                 ),
                 scopes = [
-                    _cognito.OAuthScope.EMAIL,
                     _cognito.OAuthScope.OPENID
                 ]
             )
