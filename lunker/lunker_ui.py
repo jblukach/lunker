@@ -78,12 +78,12 @@ class LunkerUI(Stack):
             user_pool_client_name = 'lunker',
             prevent_user_existence_errors = True,
             auth_flows = _cognito.AuthFlow(
-                user = True
+                user = True,
+                user_srp = True
             ),
             o_auth = _cognito.OAuthSettings(
                 default_redirect_uri = 'https://lunker.lukach.net',
                 callback_urls = [
-                    'https://hello.lukach.net',
                     'https://lunker.lukach.net'
                 ],
                 flows = _cognito.OAuthFlows(
@@ -92,7 +92,8 @@ class LunkerUI(Stack):
                 scopes = [
                     _cognito.OAuthScope.OPENID
                 ]
-            )
+            ),
+            generate_secret = True
         )
 
     #### COGNITO BRANDING ###
@@ -297,6 +298,12 @@ class LunkerUI(Stack):
             ],
             authorizer = authorizer,
             authorization_type = _api.AuthorizationType.COGNITO
+        )
+
+        api.root.add_cors_preflight(
+            allow_origins = [
+                'https://hello.lukach.net',
+            ]
         )
 
     ### BASE PATH MAPPING ###
