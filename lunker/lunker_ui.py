@@ -2,7 +2,9 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     Stack,
-    aws_apigateway as _api,
+    aws_apigatewayv2 as _api,
+    aws_apigatewayv2_authorizers as _authorizers,
+    aws_apigatewayv2_integrations as _integrations,
     aws_certificatemanager as _acm,
     aws_cognito as _cognito,
     aws_iam as _iam,
@@ -221,121 +223,74 @@ class LunkerUI(Stack):
             validation = _acm.CertificateValidation.from_dns(hostzone)
         )
 
-    ### DOMAIN NAME ###
-
-        domain = _api.CfnDomainName(
+        domain = _api.DomainName(
             self, 'domain',
-            certificate_arn = acm.certificate_arn,
             domain_name = 'lunker.lukach.net',
-            endpoint_configuration = _api.CfnDomainName.EndpointConfigurationProperty(
-                ip_address_type = 'dualstack',
-                types = [
-                    'EDGE'
-                ]
+            certificate = acm,
+            endpoint_type = _api.EndpointType.REGIONAL,
+            ip_address_type = _api.IpAddressType.DUAL_STACK
+        )
+
+    ### API LOG ROLE ###
+
+        apirole = _iam.Role(
+            self, 'apirole', 
+            assumed_by = _iam.ServicePrincipal(
+                'apigateway.amazonaws.com'
             )
         )
 
-    ### API INTEGRATION ###
-
-        rootintegration = _api.LambdaIntegration(
-            root,
-            proxy = True, 
-            integration_responses = [
-                _api.IntegrationResponse(
-                    status_code = '200',
-                    response_parameters = {
-                        'method.response.header.Access-Control-Allow-Origin': "'*'"
-                    }
-                )
-            ]
+        apirole.add_managed_policy(
+            _iam.ManagedPolicy.from_aws_managed_policy_name(
+                'service-role/AmazonAPIGatewayPushToCloudWatchLogs'
+            )
         )
 
     ### API GATEWAY ###
 
-        api = _api.RestApi(
+        integration = _integrations.HttpLambdaIntegration(
+            'integration', root
+        )
+
+        api = _api.HttpApi(
             self, 'api',
-            description = 'lunker.lukach.net',
-            cloud_watch_role = True,
-            cloud_watch_role_removal_policy = RemovalPolicy.DESTROY,
-            deploy_options = _api.StageOptions(
-                access_log_destination = _api.LogGroupLogDestination(
-                    _logs.LogGroup(
-                        self, 'apigwlogs',
-                        log_group_name = '/aws/apigateway/lunker',
-                        retention = _logs.RetentionDays.THIRTEEN_MONTHS,
-                        removal_policy = RemovalPolicy.DESTROY
-                    )
-                ),
-                access_log_format = _api.AccessLogFormat.clf(),
-                logging_level = _api.MethodLoggingLevel.INFO,
-                data_trace_enabled = True
+            api_name = 'lunker',
+            default_domain_mapping = _api.DomainMappingOptions(
+                domain_name = domain
             ),
-            endpoint_configuration = _api.EndpointConfiguration(
-                types = [
-                    _api.EndpointType.EDGE
-                ],
-                ip_address_type = _api.IpAddressType.DUAL_STACK
-            )
+            ip_address_type = _api.IpAddressType.DUAL_STACK
         )
 
-        authorizer = _api.CognitoUserPoolsAuthorizer(
-            self, 'authorizer',
-            cognito_user_pools = [
-                userpool
-            ]
-        )
-
-        api.root.add_method(
-            'GET',
-            rootintegration,
-            method_responses = [
-                _api.MethodResponse(
-                    status_code = '200',
-                    response_parameters = {
-                        'method.response.header.Access-Control-Allow-Origin': True
-                    }
-                )
+        api.add_routes(
+            path = '/',
+            methods = [
+                _api.HttpMethod.GET
             ],
-            authorizer = authorizer,
-            authorization_type = _api.AuthorizationType.COGNITO
+            integration = integration
         )
 
-        api.root.add_cors_preflight(
-            allow_origins = [
-                'https://hello.lukach.net',
-            ]
-        )
+    ### DNS RECORDS
 
-    ### BASE PATH MAPPING ###
-
-        basepath = _api.BasePathMapping(
-            self, 'basepath',
-            domain_name = domain,
-            rest_api = api
-        )
-
-    ### DNS RECORDS ### attr_distribution_domain_name
-
-        dnsfour = _route53.ARecord(
-            self, 'dnsfour',
+        ipv4dns = _route53.ARecord(
+            self, 'ipv4dns',
             zone = hostzone,
             record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
-                    domain.attr_distribution_domain_name,
-                    domain.attr_distribution_hosted_zone_id
+                    domain.regional_domain_name,
+                    domain.regional_hosted_zone_id
                 )
             )
         )
 
-        dnssix = _route53.AaaaRecord(
-            self, 'dnssix',
+        ipv6dns = _route53.AaaaRecord(
+            self, 'ipv6dns',
             zone = hostzone,
             record_name = 'lunker.lukach.net',
             target = _route53.RecordTarget.from_alias(
                 _r53targets.ApiGatewayv2DomainProperties(
-                    domain.attr_distribution_domain_name,
-                    domain.attr_distribution_hosted_zone_id
+                    domain.regional_domain_name,
+                    domain.regional_hosted_zone_id
                 )
             )
         )
