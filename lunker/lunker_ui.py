@@ -73,32 +73,12 @@ class LunkerUI(Stack):
             mfa = _cognito.Mfa.OFF
         )
 
-    ### COGNITO RESOURCE SERVER ###
-
-        scope = _cognito.ResourceServerScope(
-            scope_name = 'read',
-            scope_description = 'read-only access for lunker'
-        )
-
-        server = userpool.add_resource_server(
-            'server',
-            identifier = 'lunker',
-            user_pool_resource_server_name = 'lunker',
-            scopes = [
-                _cognito.ResourceServerScope(
-                    scope_name = 'read',
-                    scope_description = 'read-only access for lunker'
-                )
-            ]
-        )
-
     ### COGNITO APP CLIENT ###
 
         appclient = userpool.add_client(
             'appclient',
             user_pool_client_name = 'lunker',
             prevent_user_existence_errors = True,
-            enable_propagate_additional_user_context_data = True,
             auth_flows = _cognito.AuthFlow(
                 user = True,
                 user_srp = True
@@ -113,10 +93,9 @@ class LunkerUI(Stack):
                     authorization_code_grant = True
                 ),
                 scopes = [
-                    _cognito.OAuthScope.resource_server(server, scope)
+                    _cognito.OAuthScope.EMAIL
                 ]
-            ),
-            generate_secret = True
+            )
         )
 
     #### COGNITO BRANDING ###
