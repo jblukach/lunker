@@ -93,7 +93,7 @@ class LunkerUI(Stack):
                     authorization_code_grant = True
                 ),
                 scopes = [
-                    _cognito.OAuthScope.EMAIL
+                    _cognito.OAuthScope.OPENID
                 ]
             )
         )
@@ -283,6 +283,17 @@ class LunkerUI(Stack):
             )
         )
 
+    ### API LOGS ###
+
+        apilogs = _logs.LogGroup(
+            self, 'apilogs',
+            log_group_name = '/aws/apigateway/lunker',
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+
+
     ### API ROOT ###
 
         integration = _integrations.HttpLambdaIntegration(
@@ -294,8 +305,7 @@ class LunkerUI(Stack):
             methods = [
                 _api.HttpMethod.GET
             ],
-            integration = integration,
-            authorizer = authorizer
+            integration = integration
         )
 
     ### DNS RECORDS
