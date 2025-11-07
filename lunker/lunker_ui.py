@@ -84,10 +84,9 @@ class LunkerUI(Stack):
                 user_srp = True
             ),
             o_auth = _cognito.OAuthSettings(
-                default_redirect_uri = 'https://lunker.lukach.net',
+                default_redirect_uri = 'https://lunker.lukach.net/auth',
                 callback_urls = [
-                    'https://hello.lukach.net',
-                    'https://lunker.lukach.net'
+                    'https://lunker.lukach.net/auth'
                 ],
                 flows = _cognito.OAuthFlows(
                     authorization_code_grant = True
@@ -195,7 +194,47 @@ class LunkerUI(Stack):
             )
         )
 
-    ### LAMBDA FUNCTION ###
+    ### AUTH LAMBDA FUNCTION ###
+
+        auth = _lambda.Function(
+            self, 'auth',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('auth'),
+            handler = 'auth.handler',
+            timeout = Duration.seconds(7),
+            memory_size = 128,
+            role = role
+        )
+
+        authlogs = _logs.LogGroup(
+            self, 'authlogs',
+            log_group_name = '/aws/lambda/'+auth.function_name,
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+    ### HOME LAMBDA FUNCTION ###
+
+        home = _lambda.Function(
+            self, 'home',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('home'),
+            handler = 'home.handler',
+            timeout = Duration.seconds(7),
+            memory_size = 128,
+            role = role
+        )
+
+        home.logs = _logs.LogGroup(
+            self, 'homelogs',
+            log_group_name = '/aws/lambda/'+home.function_name,
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+    ### ROOT LAMBDA FUNCTION ###
 
         root = _lambda.Function(
             self, 'root',
@@ -203,6 +242,9 @@ class LunkerUI(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('root'),
             handler = 'root.handler',
+            environment = dict(
+                CLIENT_ID = appclient.user_pool_client_id
+            ),
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role
@@ -292,12 +334,42 @@ class LunkerUI(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
+    ### API STAGE ###
 
 
-    ### API ROOT ###
 
-        integration = _integrations.HttpLambdaIntegration(
-            'integration', root
+    ### AUTH API ###
+
+        authintegration = _integrations.HttpLambdaIntegration(
+            'authintegration', auth
+        )
+
+        api.add_routes(
+            path = '/auth',
+            methods = [
+                _api.HttpMethod.GET
+            ],
+            integration = authintegration
+        )
+
+    ### HOME API ###
+
+        homeintegration = _integrations.HttpLambdaIntegration(
+            'homeintegration', home
+        )
+
+        api.add_routes(
+            path = '/home',
+            methods = [
+                _api.HttpMethod.GET
+            ],
+            integration = homeintegration
+        )
+
+    ### ROOT API ###
+
+        rootintegration = _integrations.HttpLambdaIntegration(
+            'rootintegration', root
         )
 
         api.add_routes(
@@ -305,7 +377,7 @@ class LunkerUI(Stack):
             methods = [
                 _api.HttpMethod.GET
             ],
-            integration = integration
+            integration = rootintegration
         )
 
     ### DNS RECORDS
