@@ -1,6 +1,7 @@
 from aws_cdk import (
     Duration,
     RemovalPolicy,
+    SecretValue,
     Stack,
     aws_apigatewayv2 as _api,
     aws_apigatewayv2_authorizers as _authorizers,
@@ -36,6 +37,18 @@ class LunkerUI(Stack):
              self, 'hostzone',
              hosted_zone_id = hostzoneid.string_value,
              zone_name = 'lukach.net'
+        )
+
+    ### LAMBDA LAYER ###
+
+        pkgrequests = _ssm.StringParameter.from_string_parameter_arn(
+            self, 'pkgrequests',
+            'arn:aws:ssm:us-east-1:070176467818:parameter/pkg/requests'
+        )
+
+        requests = _lambda.LayerVersion.from_layer_version_arn(
+            self, 'requests',
+            layer_version_arn = pkgrequests.string_value
         )
 
     ### COGNITO USER POOL ###
@@ -84,9 +97,9 @@ class LunkerUI(Stack):
                 user_srp = True
             ),
             o_auth = _cognito.OAuthSettings(
-                default_redirect_uri = 'https://lunker.lukach.net/lake',
+                default_redirect_uri = 'https://lunker.lukach.net/auth',
                 callback_urls = [
-                    'https://lunker.lukach.net/lake'
+                    'https://lunker.lukach.net/auth'
                 ],
                 flows = _cognito.OAuthFlows(
                     authorization_code_grant = True
@@ -94,7 +107,8 @@ class LunkerUI(Stack):
                 scopes = [
                     _cognito.OAuthScope.OPENID
                 ]
-            )
+            ),
+            generate_secret = True
         )
 
     #### COGNITO BRANDING ###
@@ -186,8 +200,7 @@ class LunkerUI(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions = [
-                    'apigateway:GET',
-                    'apigateway:POST'
+                    'apigateway:GET'
                 ],
                 resources = [
                     '*'
@@ -203,9 +216,16 @@ class LunkerUI(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('auth'),
             handler = 'auth.handler',
+            environment = dict(
+                CLIENT_ID = appclient.user_pool_client_id,
+                CLIENT_SECRET = SecretValue.unsafe_unwrap(appclient.user_pool_client_secret)
+            ),
             timeout = Duration.seconds(7),
             memory_size = 128,
-            role = role
+            role = role,
+            layers = [
+                requests
+            ]
         )
 
         authlogs = _logs.LogGroup(
@@ -215,22 +235,22 @@ class LunkerUI(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
-    ### LAKE LAMBDA FUNCTION ###
+    ### HOME LAMBDA FUNCTION ###
 
-        lake = _lambda.Function(
-            self, 'lake',
+        home = _lambda.Function(
+            self, 'home',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
-            code = _lambda.Code.from_asset('lake'),
-            handler = 'lake.handler',
+            code = _lambda.Code.from_asset('home'),
+            handler = 'home.handler',
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role
         )
 
-        lakelogs = _logs.LogGroup(
-            self, 'lakelogs',
-            log_group_name = '/aws/lambda/'+lake.function_name,
+        homelogs = _logs.LogGroup(
+            self, 'homelogs',
+            log_group_name = '/aws/lambda/'+home.function_name,
             retention = _logs.RetentionDays.THIRTEEN_MONTHS,
             removal_policy = RemovalPolicy.DESTROY
         )
@@ -336,18 +356,32 @@ class LunkerUI(Stack):
 
 
 
-    ### LAKE API ###
+    ### AUTH API ###
 
-        lakeintegration = _integrations.HttpLambdaIntegration(
-            'lakeintegration', lake
+        authintegration = _integrations.HttpLambdaIntegration(
+            'authintegration', auth
         )
 
         api.add_routes(
-            path = '/lake',
+            path = '/auth',
             methods = [
                 _api.HttpMethod.GET
             ],
-            integration = lakeintegration,
+            integration = authintegration
+        )
+
+    ### HOME API ###
+
+        homeintegration = _integrations.HttpLambdaIntegration(
+            'homeintegration', home
+        )
+
+        api.add_routes(
+            path = '/home',
+            methods = [
+                _api.HttpMethod.GET
+            ],
+            integration = homeintegration,
             authorizer = authorizer
         )
 
