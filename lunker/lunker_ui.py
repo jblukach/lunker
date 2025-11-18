@@ -235,6 +235,26 @@ class LunkerUI(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
+    ### AUTHORIZER LAMBDA FUNCTION ###
+
+        authorizer = _lambda.Function(
+            self, 'authorizer',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('authorizer'),
+            handler = 'authorizer.handler',
+            timeout = Duration.seconds(7),
+            memory_size = 128,
+            role = role
+        )
+
+        authorizerlogs = _logs.LogGroup(
+            self, 'authorizerlogs',
+            log_group_name = '/aws/lambda/'+authorizer.function_name,
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
     ### HOME LAMBDA FUNCTION ###
 
         home = _lambda.Function(
@@ -320,9 +340,9 @@ class LunkerUI(Stack):
 
     ### API AUTHORIZER ###
 
-        authorizer = _authorizers.HttpLambdaAuthorizer(
-            'authorizer',
-            auth,
+        lambdaauthorizer = _authorizers.HttpLambdaAuthorizer(
+            'lambdaauthorizer',
+            authorizer,
             response_types = [
                 _authorizers.HttpLambdaResponseType.SIMPLE
             ]
@@ -344,7 +364,8 @@ class LunkerUI(Stack):
                     _api.CorsHttpMethod.GET
                 ],
                 allow_origins = [
-                    'https://hello.lukach.net'
+                    'https://hello.lukach.net',
+                    'https://lunker.lukach.net'
                 ]
             )
         )
@@ -386,7 +407,7 @@ class LunkerUI(Stack):
                 _api.HttpMethod.GET
             ],
             integration = homeintegration,
-            authorizer = authorizer
+            authorizer = lambdaauthorizer
         )
 
     ### ROOT API ###
