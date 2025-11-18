@@ -309,6 +309,15 @@ class LunkerUI(Stack):
             )
         )
 
+    ### API LOGS STORAGE ###
+
+        apilogs = _logs.LogGroup(
+            self, 'apilogs',
+            log_group_name = '/aws/apigateway/lunker',
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
     ### API AUTHORIZER ###
 
         authorizer = _authorizers.HttpLambdaAuthorizer(
@@ -324,9 +333,7 @@ class LunkerUI(Stack):
         api = _api.HttpApi(
             self, 'api',
             api_name = 'lunker',
-            default_domain_mapping = _api.DomainMappingOptions(
-                domain_name = domain
-            ),
+            create_default_stage = False,
             ip_address_type = _api.IpAddressType.DUAL_STACK,
             cors_preflight = _api.CorsPreflightOptions(
                 allow_credentials = True,
@@ -342,19 +349,16 @@ class LunkerUI(Stack):
             )
         )
 
-    ### API LOGS ###
-
-        apilogs = _logs.LogGroup(
-            self, 'apilogs',
-            log_group_name = '/aws/apigateway/lunker',
-            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
-            removal_policy = RemovalPolicy.DESTROY
-        )
-
     ### API STAGE ###
 
-
-
+        stage = api.add_stage(
+            'stage',
+            stage_name = '$default',
+            auto_deploy = True,
+            domain_mapping = _api.DomainMappingOptions(
+                domain_name = domain
+            )
+        )
 
     ### AUTH API ###
 
