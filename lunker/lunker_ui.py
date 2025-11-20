@@ -361,7 +361,8 @@ class LunkerUI(Stack):
                     'Authorization'
                 ],
                 allow_methods = [
-                    _api.CorsHttpMethod.GET
+                    _api.CorsHttpMethod.GET,
+                    _api.CorsHttpMethod.POST
                 ],
                 allow_origins = [
                     'https://hello.lukach.net',
