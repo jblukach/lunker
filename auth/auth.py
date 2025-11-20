@@ -33,7 +33,7 @@ def handler(event, context):
                 'redirect_uri': 'https://lunker.lukach.net/auth'
             }
             response = requests.post(url, headers=headers, data=data)
-            if response.status_code == 200:
+            if response.status_code == 200 and 'id_token' in response.json():
                 code = 200
                 tokens = response.json()
                 html = html = '''<HTML>
