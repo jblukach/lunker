@@ -245,7 +245,10 @@ class LunkerUI(Stack):
             handler = 'authorizer.handler',
             timeout = Duration.seconds(7),
             memory_size = 128,
-            role = role
+            role = role,
+            layers = [
+                requests
+            ]
         )
 
         authorizerlogs = _logs.LogGroup(

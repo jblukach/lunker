@@ -40,7 +40,7 @@ def handler(event, context):
                 <HEAD>
                     <TITLE>Happy Fishing!</TITLE>
                     <SCRIPT>
-                        const headers = { 'Authorization': 'Bearer ''' + tokens['id_token'] + '''' };
+                        const headers = { 'Authorization': 'Bearer ''' + tokens['access_token'] + '''' };
                         fetch('https://lunker.lukach.net/home', { headers: headers })
                             .then(response => response.text())
                             .then(data => { document.write(data); });
