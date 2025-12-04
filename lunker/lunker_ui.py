@@ -65,6 +65,9 @@ class LunkerUI(Stack):
             sign_in_aliases = _cognito.SignInAliases(
                 email = True
             ),
+            email = _cognito.UserPoolEmail.with_ses(
+                from_email = 'hello@lukach.net'
+            ),
             sign_in_case_sensitive = False,
             sign_in_policy = _cognito.SignInPolicy(
                 allowed_first_auth_factors = _cognito.AllowedFirstAuthFactors(
@@ -357,21 +360,7 @@ class LunkerUI(Stack):
             self, 'api',
             api_name = 'lunker',
             create_default_stage = False,
-            ip_address_type = _api.IpAddressType.DUAL_STACK,
-            cors_preflight = _api.CorsPreflightOptions(
-                allow_credentials = True,
-                allow_headers = [
-                    'Authorization'
-                ],
-                allow_methods = [
-                    _api.CorsHttpMethod.GET,
-                    _api.CorsHttpMethod.POST
-                ],
-                allow_origins = [
-                    'https://hello.lukach.net',
-                    'https://lunker.lukach.net'
-                ]
-            )
+            ip_address_type = _api.IpAddressType.DUAL_STACK
         )
 
     ### API STAGE ###
