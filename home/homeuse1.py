@@ -11,7 +11,7 @@ def handler(event, context):
     <BODY>
         <CENTER>
             <IMAGE SRC="https://lukach.net/images/lunker.png" ALT="Lunker Logo">
-            <H2>Fish On!</H2>
+            <H2>Fish On @ USE1!</H2>
         </CENTER>
     </BODY>
     </HTML>'''
