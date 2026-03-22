@@ -1,5 +1,7 @@
 import base64
 import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import BotoCoreError, ClientError
 import html
 import json
 import os
@@ -143,6 +145,37 @@ def _delete_lunker_domain(table, email, domain):
     )
 
 
+def _list_lunker_domains(table, email):
+    if not email or email == 'unknown':
+        return []
+
+    domains = []
+    query_kwargs = {
+        'KeyConditionExpression': Key('pk').eq('LUNKER#') & Key('sk').begins_with(f'LUNKER#{email}#'),
+        'ProjectionExpression': '#domain',
+        'ExpressionAttributeNames': {
+            '#domain': 'domain',
+        },
+    }
+
+    try:
+        while True:
+            response = table.query(**query_kwargs)
+            for item in response.get('Items', []):
+                normalized_domain = _normalize_domain(item.get('domain'))
+                if normalized_domain:
+                    domains.append(normalized_domain)
+
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+    except (BotoCoreError, ClientError, KeyError, TypeError):
+        return []
+
+    return sorted(set(domains))
+
+
 def _process_submission(raw_domain, email, action):
     normalized_domain = _normalize_domain(raw_domain)
     is_valid, validation_message = _validate_domain(normalized_domain)
@@ -163,16 +196,34 @@ def _process_submission(raw_domain, email, action):
     normalized_action = (action or '').strip().lower()
     if normalized_action == 'deleteitem':
         _delete_lunker_domain(lunker_table, email, normalized_domain)
-        return normalized_domain, True, 'Domain deleted from lunker table.'
+        return normalized_domain, True, normalized_domain
 
     _put_lunker_domain(lunker_table, email, normalized_domain)
     return normalized_domain, True, 'Domain saved to lunker table.'
 
 
-def _render_form(authorization_header, identity):
+def _render_form(authorization_header, identity, domains=None):
     auth_header_json = json.dumps(authorization_header)
     safe_email = html.escape(identity.get('email', 'unknown'))
     safe_region = html.escape(identity.get('region', 'unknown'))
+    domains = domains or []
+    if domains:
+        domain_list_html = ''.join('<li>{}</li>'.format(html.escape(domain)) for domain in domains)
+        domains_section = f'''
+            <section class="domains">
+                <h2>Domains</h2>
+                <ol>
+                    {domain_list_html}
+                </ol>
+            </section>
+        '''
+    else:
+        domains_section = '''
+            <section class="domains">
+                <h2>Domains</h2>
+                <p class="domains-empty">Empty!</p>
+            </section>
+        '''
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -248,6 +299,32 @@ def _render_form(authorization_header, identity):
             text-align: center;
         }}
 
+        .domains {{
+            margin-top: 24px;
+            text-align: left;
+            border-top: 1px solid #dbe5f0;
+            padding-top: 16px;
+        }}
+
+        .domains h2 {{
+            margin: 0 0 10px;
+            font-size: 1rem;
+        }}
+
+        .domains ul {{
+            margin: 0;
+            padding-left: 20px;
+        }}
+
+        .domains li {{
+            margin-bottom: 6px;
+        }}
+
+        .domains-empty {{
+            margin: 0;
+            text-align: left;
+        }}
+
         button {{
             border: 0;
             border-radius: 999px;
@@ -282,6 +359,8 @@ def _render_form(authorization_header, identity):
             <div class="actions">
                 <button type="button" onclick="submitHomeForm()">Submit</button>
             </div>
+
+            {domains_section}
         </form>
     </main>
 
@@ -369,12 +448,14 @@ def _render_form(authorization_header, identity):
 </html>'''
 
 
-def _render_result(action, entry, message, success=True):
-    safe_action = html.escape(action)
-    safe_entry = html.escape(entry)
+def _render_result(action, entry, message, success=True, authorization_header='', operation='submission'):
     safe_message = html.escape(message)
-    heading = 'Submission Received' if success else 'Submission Failed'
+    if operation == 'deletion':
+        heading = 'Deletion Successful' if success else 'Deletion Failed'
+    else:
+        heading = 'Submission Successful' if success else 'Submission Failed'
     message_color = '#166534' if success else '#b42318'
+    auth_header_json = json.dumps(authorization_header)
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -421,7 +502,14 @@ def _render_result(action, entry, message, success=True):
         a {{
             display: inline-block;
             margin-top: 24px;
-            color: #0e7490;
+            border: 0;
+            border-radius: 999px;
+            background: #0e7490;
+            color: #ffffff;
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 12px 28px;
+            text-decoration: none;
         }}
     </style>
 </head>
@@ -429,15 +517,27 @@ def _render_result(action, entry, message, success=True):
     <main>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
         <h1>{heading}</h1>
-        <p style="color:{message_color}">{safe_message}</p>
-        <dl>
-            <dt>Option</dt>
-            <dd>{safe_action}</dd>
-            <dt>Text</dt>
-            <dd>{safe_entry}</dd>
-        </dl>
-        <a href="{API_ENDPOINT}">Back to form</a>
+        <p style="color:{message_color}; white-space: pre-line;">{safe_message}</p>
+        <a href="#" onclick="goHome(); return false;">Back</a>
     </main>
+    <script>
+        async function goHome() {{
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'GET',
+                    headers: {{
+                        'Authorization': {auth_header_json} || ''
+                    }}
+                }});
+                const responseHtml = await response.text();
+                document.open();
+                document.write(responseHtml);
+                document.close();
+            }} catch (err) {{
+                window.location.href = '{API_ENDPOINT}';
+            }}
+        }}
+    </script>
 </body>
 </html>'''
 
@@ -462,12 +562,25 @@ def handler(event, _context):
             action,
         )
 
+        normalized_action = (action or '').strip().lower()
+        operation = 'deletion' if normalized_action == 'deleteitem' else 'submission'
+        if normalized_action == 'putitem':
+            if success:
+                message = domain
+            else:
+                message = f'{domain}\n\n{message}'
+        elif normalized_action == 'deleteitem' and success:
+            message = domain
+
         if not success:
             action = f'{action} (Not Saved)'.strip()
-        response_html = _render_result(action, domain, message, success)
+        response_html = _render_result(action, domain, message, success, authorization_header, operation)
     else:
         identity = _fetch_user_identity(authorization_header)
-        response_html = _render_form(authorization_header, identity)
+        dynamodb = boto3.resource('dynamodb')
+        lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
+        domains = _list_lunker_domains(lunker_table, identity.get('email', 'unknown'))
+        response_html = _render_form(authorization_header, identity, domains)
 
     return {
         'statusCode': 200,
