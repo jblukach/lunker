@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_lambda_event_sources as _sources,
     aws_logs as _logs,
+    aws_ssm as _ssm
 )
 
 from constructs import Construct
@@ -15,6 +16,13 @@ class LunkerDatabase(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+    ### PARAMETER ###
+
+        organization = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'organization',
+            parameter_name = '/organization/id'
+        )
 
     ### DATABASE ###
 
@@ -40,6 +48,34 @@ class LunkerDatabase(Stack):
                 _dynamodb.ReplicaTableProps(region = 'us-east-1'),
                 _dynamodb.ReplicaTableProps(region = 'us-west-2'),
             ]
+        )
+
+    ### RESOURCE POLICY ###
+
+        table.add_to_resource_policy(
+            _iam.PolicyStatement(
+                sid = 'AllowOrganizationGetItemAndQuery',
+                effect = _iam.Effect.ALLOW,
+                principals = [
+                    _iam.OrganizationPrincipal(organization_id = organization.string_value)
+                ],
+                actions = [
+                    'dynamodb:GetItem',
+                    'dynamodb:Query'
+                ],
+                resources = [
+                    self.format_arn(
+                        service = 'dynamodb',
+                        resource = 'table',
+                        resource_name = 'lunker'
+                    ),
+                    self.format_arn(
+                        service = 'dynamodb',
+                        resource = 'table',
+                        resource_name = 'lunker/index/*'
+                    )
+                ]
+            )
         )
 
     ### IAM ROLE ###
