@@ -108,6 +108,7 @@ class LunkerStackUsw2(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions = [
+                    'dynamodb:GetItem',
                     'dynamodb:DeleteItem',
                     'dynamodb:PutItem',
                     'dynamodb:Query'
@@ -136,8 +137,8 @@ class LunkerStackUsw2(Stack):
                 LUNKER_TABLE = 'lunker',
                 TLD_TABLE = table.table_name
             ),
-            timeout = Duration.seconds(7),
-            memory_size = 128,
+            timeout = Duration.seconds(30),
+            memory_size = 256,
             role = role,
             layers = [
                 requests

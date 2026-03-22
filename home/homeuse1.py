@@ -1,8 +1,12 @@
 import base64
+import boto3
 import html
 import json
+import os
+import requests
 
-API_ENDPOINT = 'http://use1.api.lukach.io/home'
+API_ENDPOINT = 'https://use1.api.lukach.io/home'
+USER_INFO_ENDPOINT = 'https://hello-use1.lukach.io/oauth2/userInfo'
 
 def _get_method(event):
     request_context = event.get('requestContext') or {}
@@ -26,14 +30,155 @@ def _get_authorization(event):
     return headers.get('authorization') or headers.get('Authorization') or ''
 
 
-def _render_form(authorization_header):
+def _normalize_authorization(authorization_header):
+    if not authorization_header:
+        return ''
+
+    value = authorization_header.strip()
+    if not value:
+        return ''
+
+    if value.lower().startswith('bearer '):
+        return value
+
+    return f'Bearer {value}'
+
+
+def _fetch_user_identity(authorization_header):
+    default_region = os.getenv('AWS_REGION', 'unknown')
+    identity = {
+        'email': 'unknown',
+        'region': default_region,
+    }
+
+    normalized_authorization = _normalize_authorization(authorization_header)
+    if not normalized_authorization:
+        return identity
+
+    try:
+        response = requests.get(
+            USER_INFO_ENDPOINT,
+            headers={
+                'Authorization': normalized_authorization,
+                'Accept': 'application/json',
+            },
+            timeout=5,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return identity
+
+    identity['email'] = (
+        payload.get('email')
+        or payload.get('username')
+        or payload.get('cognito:username')
+        or 'unknown'
+    )
+    identity['region'] = (
+        payload.get('region')
+        or payload.get('custom:region')
+        or payload.get('zoneinfo')
+        or default_region
+    )
+    return identity
+
+
+def _normalize_domain(entry):
+    if not isinstance(entry, str):
+        return ''
+
+    return entry.strip().lower().rstrip('.')
+
+
+def _validate_domain(domain):
+    if not domain:
+        return False, 'Domain is required.'
+
+    labels = domain.split('.')
+    if len(labels) < 2 or (len(labels) == 2 and labels[1] == ''):
+        return False, 'Domain must include a single dot (e.g. example.com).'
+    if len(labels) != 2:
+        return False, 'Domain must contain exactly one dot (no subdomains allowed).'
+
+    return True, ''
+
+
+def _tld_exists(table, tld):
+    response = table.get_item(
+        Key={
+            'pk': 'TLD#',
+            'sk': tld,
+        },
+        ProjectionExpression='sk',
+    )
+    return 'Item' in response
+
+
+def _split_domain(domain):
+    sld, tld = domain.split('.')
+    return sld, tld
+
+
+def _put_lunker_domain(table, email, domain):
+    sld, tld = _split_domain(domain)
+    table.put_item(
+        Item={
+            'pk': 'LUNKER#',
+            'sk': f'LUNKER#{email}#{domain}',
+            'domain': domain,
+            'email': email,
+            'sld': sld,
+            'tld': tld,
+        }
+    )
+
+
+def _delete_lunker_domain(table, email, domain):
+    table.delete_item(
+        Key={
+            'pk': 'LUNKER#',
+            'sk': f'LUNKER#{email}#{domain}',
+        }
+    )
+
+
+def _process_submission(raw_domain, email, action):
+    normalized_domain = _normalize_domain(raw_domain)
+    is_valid, validation_message = _validate_domain(normalized_domain)
+    if not is_valid:
+        return normalized_domain, False, validation_message
+
+    if not email or email == 'unknown':
+        return normalized_domain, False, 'Unable to resolve user email from token.'
+
+    dynamodb = boto3.resource('dynamodb')
+    tld_table = dynamodb.Table(os.environ['TLD_TABLE'])
+    lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
+
+    _, top_level_domain = _split_domain(normalized_domain)
+    if not _tld_exists(tld_table, top_level_domain):
+        return normalized_domain, False, f'Invalid top-level domain: .{top_level_domain}'
+
+    normalized_action = (action or '').strip().lower()
+    if normalized_action == 'deleteitem':
+        _delete_lunker_domain(lunker_table, email, normalized_domain)
+        return normalized_domain, True, 'Domain deleted from lunker table.'
+
+    _put_lunker_domain(lunker_table, email, normalized_domain)
+    return normalized_domain, True, 'Domain saved to lunker table.'
+
+
+def _render_form(authorization_header, identity):
     auth_header_json = json.dumps(authorization_header)
+    safe_email = html.escape(identity.get('email', 'unknown'))
+    safe_region = html.escape(identity.get('region', 'unknown'))
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fish On!</title>
+    <title>Gone Fishing!</title>
     <style>
         body {{
             font-family: sans-serif;
@@ -65,6 +210,16 @@ def _render_form(authorization_header):
         p {{
             margin: 0 0 24px;
             text-align: center;
+        }}
+
+        .identity {{
+            margin: 0 0 24px;
+            padding: 12px 14px;
+            border: 1px solid #c6d3e1;
+            border-radius: 10px;
+            background: #f8fbff;
+            text-align: left;
+            line-height: 1.5;
         }}
 
         label {{
@@ -108,13 +263,18 @@ def _render_form(authorization_header):
     <main>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
 
+        <div class="identity">
+            <strong>Email:</strong> {safe_email}<br>
+            <strong>Region:</strong> {safe_region}
+        </div>
+
         <form id="home-form">
             <label for="entry">Domain</label>
             <input id="entry" name="entry" type="text" required>
 
             <div class="options">
-                <label><input type="radio" name="action" value="Add" checked> Add</label>
-                <label><input type="radio" name="action" value="Remove"> Remove</label>
+                <label><input type="radio" name="action" value="PutItem" checked> Add</label>
+                <label><input type="radio" name="action" value="DeleteItem"> Remove</label>
             </div>
 
             <p id="entry-print"></p>
@@ -126,45 +286,102 @@ def _render_form(authorization_header):
     </main>
 
     <script>
+        function validateDomain(domain) {{
+            const issues = [];
+            if (!domain) {{
+                issues.push('Domain is required.');
+                return issues;
+            }}
+
+            const labels = domain.split('.');
+            if (labels.length < 2 || (labels.length === 2 && labels[1] === '')) {{
+                issues.push('Domain must include a single dot (e.g. example.com).');
+                return issues;
+            }}
+            if (labels.length !== 2) {{
+                issues.push('Domain must contain exactly one dot (no subdomains allowed).');
+                return issues;
+            }}
+
+            const sldPattern = /^[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?$/;
+            const tldPattern = /^[a-z0-9-]{{2,63}}$/;
+            const sld = labels[0];
+            const tld = labels[1];
+
+            if (!sldPattern.test(sld)) {{
+                issues.push('Invalid second-level domain.');
+            }}
+
+            if (!tldPattern.test(tld)) {{
+                issues.push('Invalid top-level domain format.');
+            }}
+
+            return issues;
+        }}
+
         async function submitHomeForm() {{
             const form = document.getElementById('home-form');
             const formData = new FormData(form);
             const action = formData.get('action');
             const entry = formData.get('entry');
+            const normalizedEntry = (entry || '').trim().toLowerCase();
             const entryPrint = document.getElementById('entry-print');
             const authHeader = {auth_header_json};
 
-            entryPrint.textContent = `Text entered: ${{entry}}`;
+            document.getElementById('entry').value = normalizedEntry;
+            const issues = validateDomain(normalizedEntry);
+            if (issues.length > 0) {{
+                entryPrint.style.color = '#b42318';
+                entryPrint.innerHTML = issues.join('<br>');
+                return;
+            }}
 
-            const response = await fetch('{API_ENDPOINT}', {{
-                method: 'POST',
-                headers: {{
-                    'Content-Type': 'application/json',
-                    'Authorization': authHeader
-                }},
-                body: JSON.stringify({{ action, entry }})
-            }});
+            entryPrint.style.color = '#166534';
+            entryPrint.textContent = 'Submitting…';
 
-            const responseHtml = await response.text();
-            document.open();
-            document.write(responseHtml);
-            document.close();
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader || ''
+                    }},
+                    body: JSON.stringify({{ action, entry: normalizedEntry }})
+                }});
+
+                if (!response.ok) {{
+                    entryPrint.style.color = '#b42318';
+                    entryPrint.textContent = 'Submission failed: HTTP ' + response.status;
+                    return;
+                }}
+
+                const responseHtml = await response.text();
+                document.open();
+                document.write(responseHtml);
+                document.close();
+            }} catch (err) {{
+                entryPrint.style.color = '#b42318';
+                entryPrint.textContent = 'Submission failed: ' + err.message;
+            }}
         }}
     </script>
 </body>
 </html>'''
 
 
-def _render_result(action, entry):
+def _render_result(action, entry, message, success=True):
     safe_action = html.escape(action)
     safe_entry = html.escape(entry)
+    safe_message = html.escape(message)
+    heading = 'Submission Received' if success else 'Submission Failed'
+    message_color = '#166534' if success else '#b42318'
 
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fish On!</title>
+    <title>Gone Fishing!</title>
     <style>
         body {{
             font-family: sans-serif;
@@ -211,7 +428,8 @@ def _render_result(action, entry):
 <body>
     <main>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
-        <h1>Submission Received</h1>
+        <h1>{heading}</h1>
+        <p style="color:{message_color}">{safe_message}</p>
         <dl>
             <dt>Option</dt>
             <dd>{safe_action}</dd>
@@ -228,15 +446,28 @@ def handler(event, _context):
     print(event)
 
     method = _get_method(event)
+    authorization_header = _get_authorization(event)
 
     if method == 'POST':
         try:
             payload = json.loads(_get_body(event) or '{}')
         except json.JSONDecodeError:
             payload = {}
-        response_html = _render_result(payload.get('action', ''), payload.get('entry', ''))
+
+        identity = _fetch_user_identity(authorization_header)
+        action = payload.get('action', 'PutItem')
+        domain, success, message = _process_submission(
+            payload.get('entry', ''),
+            identity.get('email', 'unknown'),
+            action,
+        )
+
+        if not success:
+            action = f'{action} (Not Saved)'.strip()
+        response_html = _render_result(action, domain, message, success)
     else:
-        response_html = _render_form(_get_authorization(event))
+        identity = _fetch_user_identity(authorization_header)
+        response_html = _render_form(authorization_header, identity)
 
     return {
         'statusCode': 200,
