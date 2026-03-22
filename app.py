@@ -3,13 +3,23 @@ import os
 
 import aws_cdk as cdk
 
+from lunker.lunker_database import LunkerDatabase
 from lunker.lunker_stackuse1 import LunkerStackUse1
 from lunker.lunker_stackuse2 import LunkerStackUse2
 from lunker.lunker_stackusw2 import LunkerStackUsw2
-from lunker.lunker_topleveldomain import LunkerTopLevelDomain
-from lunker.lunker_watchlist import LunkerWatchList
 
 app = cdk.App()
+
+LunkerDatabase(
+    app, 'LunkerDatabase',
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
 
 LunkerStackUse1(
     app, 'LunkerStackUse1',
@@ -38,28 +48,6 @@ LunkerStackUsw2(
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-west-2'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = 'lukach'
-    )
-)
-
-LunkerTopLevelDomain(
-    app, 'LunkerTopLevelDomain',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-2'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = 'lukach'
-    )
-)
-
-LunkerWatchList(
-    app, 'LunkerWatchList',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-2'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'
