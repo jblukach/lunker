@@ -208,7 +208,12 @@ def _render_form(authorization_header, identity, domains=None):
     safe_region = html.escape(identity.get('region', 'unknown'))
     domains = domains or []
     if domains:
-        domain_list_html = ''.join('<li>{}</li>'.format(html.escape(domain)) for domain in domains)
+        domain_list_html = ''.join(
+            '<li><a href="#" onclick="showDomain(\'{d}\'); return false;">{d}</a></li>'.format(
+                d=html.escape(domain)
+            )
+            for domain in domains
+        )
         domains_section = f'''
             <section class="domains">
                 <h2>Domains</h2>
@@ -318,6 +323,15 @@ def _render_form(authorization_header, identity, domains=None):
 
         .domains li {{
             margin-bottom: 6px;
+        }}
+
+        .domains a {{
+            color: #0e7490;
+            text-decoration: none;
+        }}
+
+        .domains a:hover {{
+            text-decoration: underline;
         }}
 
         .domains-empty {{
@@ -442,6 +456,29 @@ def _render_form(authorization_header, identity, domains=None):
                 entryPrint.style.color = '#b42318';
                 entryPrint.textContent = 'Submission failed: ' + err.message;
             }}
+        }}
+
+        function goHome() {{
+            fetch('{API_ENDPOINT}', {{
+                method: 'GET',
+                headers: {{ 'Authorization': {auth_header_json} || '' }}
+            }})
+            .then(r => r.text())
+            .then(h => {{ document.open(); document.write(h); document.close(); }})
+            .catch(() => {{ window.location.href = '{API_ENDPOINT}'; }});
+        }}
+
+        function showDomain(domain) {{
+            const safeD = domain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            document.querySelector('main').innerHTML =
+                '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
+                '<p><strong>Domain:</strong> ' + safeD + '</p>' +
+                '<div style="text-align:center;">' +
+                '<a href="#" onclick="goHome(); return false;" ' +
+                'style="display:inline-block;margin-top:16px;border:0;border-radius:999px;' +
+                'background:#0e7490;color:#ffffff;cursor:pointer;font-size:1rem;padding:12px 28px;text-decoration:none;">' +
+                'Back</a>' +
+                '</div>';
         }}
     </script>
 </body>
