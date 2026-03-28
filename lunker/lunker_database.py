@@ -1,3 +1,5 @@
+from re import search
+
 from aws_cdk import (
     Duration,
     RemovalPolicy,
@@ -17,11 +19,18 @@ class LunkerDatabase(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        region = Stack.of(self).region
+
     ### PARAMETER ###
 
         organization = _ssm.StringParameter.from_string_parameter_attributes(
             self, 'organization',
             parameter_name = '/organization/id'
+        )
+
+        webmonitor = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'webmonitor',
+            parameter_name = '/account/webmonitor'
         )
 
     ### DATABASE ###
@@ -93,6 +102,17 @@ class LunkerDatabase(Stack):
             )
         )
 
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    'lambda:InvokeFunction'
+                ],
+                resources = [
+                    '*'
+                ]
+            )
+        )
+
     ### ACTION LAMBDA ###
 
         action = _lambda.Function(
@@ -102,6 +122,9 @@ class LunkerDatabase(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('action'),
             handler = 'action.handler',
+            environment = dict(
+                FUNCTION_NAME = 'arn:aws:lambda:'+region+':'+webmonitor.string_value+':function:searchlist'
+            ),
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role
