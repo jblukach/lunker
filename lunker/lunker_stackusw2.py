@@ -21,6 +21,8 @@ class LunkerStackUsw2(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        region = Stack.of(self).region
+
         year = datetime.datetime.now().strftime('%Y')
         month = datetime.datetime.now().strftime('%m')
         day = datetime.datetime.now().strftime('%d')
@@ -79,6 +81,11 @@ class LunkerStackUsw2(Stack):
             parameter_name = '/organization/id'
         )
 
+        webmonitor = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'webmonitor',
+            parameter_name = '/account/webmonitor'
+        )
+
     ### IAM ROLE ###
 
         role = _iam.Role(
@@ -135,7 +142,18 @@ class LunkerStackUsw2(Stack):
             handler = 'homeusw2.handler',
             environment = dict(
                 LUNKER_TABLE = 'lunker',
-                TLD_TABLE = table.table_name
+                TLD_TABLE = table.table_name,
+                WM_OSINT = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/osint',
+                WM_MALWARE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/malware',
+                WM_DAILYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/dailyupdate',
+                WM_WEEKLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/weeklyupdate',
+                WM_MONTHLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/monthlyupdate',
+                WM_QUARTERLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/quarterlyupdate',
+                WM_DAILYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/dailyremove',
+                WM_WEEKLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/weeklyremove',
+                WM_MONTHLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/monthlyremove',
+                WM_QUARTERLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/quarterlyremove',
+                WM_FULL = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/full'
             ),
             timeout = Duration.seconds(30),
             memory_size = 256,
