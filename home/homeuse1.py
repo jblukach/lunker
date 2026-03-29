@@ -202,6 +202,147 @@ def _process_submission(raw_domain, email, action):
     return normalized_domain, True, 'Domain saved to lunker table.'
 
 
+def _table_name_from_env(value):
+    if not isinstance(value, str):
+        return ''
+
+    normalized = value.strip()
+    if not normalized:
+        return ''
+
+    marker = ':table/'
+    if marker in normalized:
+        return normalized.split(marker, 1)[1]
+
+    return normalized
+
+
+def _resolve_table_identifiers(*env_keys):
+    identifiers = []
+    for key in env_keys:
+        raw_value = os.getenv(key, '').strip()
+        if not raw_value:
+            continue
+
+        parsed_name = _table_name_from_env(raw_value)
+        if raw_value not in identifiers:
+            identifiers.append(raw_value)
+        if parsed_name and parsed_name not in identifiers:
+            identifiers.append(parsed_name)
+
+    return identifiers
+
+
+def _extract_domain_value(item, sld):
+    if not isinstance(item, dict):
+        return ''
+
+    for key in ('domain', 'fqdn', 'host', 'name'):
+        normalized_domain = _normalize_domain(item.get(key))
+        if normalized_domain:
+            return normalized_domain
+
+    sk_value = item.get('sk')
+    if isinstance(sk_value, str):
+        for token in sk_value.split('#'):
+            normalized_token = _normalize_domain(token)
+            if normalized_token.startswith(f'{sld}.'):
+                return normalized_token
+
+    return ''
+
+
+def _query_with_prefix(dynamodb_client, table_identifier, sld, sk_prefix):
+    domains = []
+    expression_values = {
+        ':pk': {'S': 'LUNKER#'},
+        ':sk': {'S': sk_prefix},
+    }
+    query_kwargs = {
+        'TableName': table_identifier,
+        'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
+        'ExpressionAttributeValues': expression_values,
+    }
+
+    while True:
+        response = dynamodb_client.query(**query_kwargs)
+        for item in response.get('Items', []):
+            normalized_item = {
+                key: next(iter(value.values())) if isinstance(value, dict) and value else value
+                for key, value in item.items()
+            }
+            normalized_domain = _extract_domain_value(normalized_item, sld)
+            if normalized_domain:
+                domains.append(normalized_domain)
+
+        last_evaluated_key = response.get('LastEvaluatedKey')
+        if not last_evaluated_key:
+            break
+        query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+    return domains
+
+
+def _query_paginated_domains(dynamodb_client, table_identifier, sld):
+    prefixes = [
+        f'LUNKER#{sld}#',
+        f'LUNKER#{sld}',
+    ]
+    all_domains = []
+
+    for prefix in prefixes:
+        try:
+            all_domains.extend(_query_with_prefix(dynamodb_client, table_identifier, sld, prefix))
+        except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
+            print(f'WM query failed for prefix {prefix} on table {table_identifier}: {exc}')
+            continue
+
+    return sorted(set(all_domains))
+
+
+def _load_section_domains(dynamodb_client, sld, *env_keys):
+    table_identifiers = _resolve_table_identifiers(*env_keys)
+    if not table_identifiers:
+        return []
+
+    for table_identifier in table_identifiers:
+        domains = _query_paginated_domains(dynamodb_client, table_identifier, sld)
+        if domains:
+            return domains
+
+    return []
+
+
+def _get_domain_sections(domain):
+    normalized_domain = _normalize_domain(domain)
+    is_valid, _ = _validate_domain(normalized_domain)
+    if not is_valid:
+        return {}
+
+    sld, _ = _split_domain(normalized_domain)
+    dynamodb_client = boto3.client('dynamodb')
+
+    return {
+        'suspect': {
+            'openSourceIntelligence': _load_section_domains(dynamodb_client, sld, 'WM_OSINT'),
+            'domainsMonitorSubscription': _load_section_domains(dynamodb_client, sld, 'WM_MALWARE'),
+        },
+        'newRegistrations': {
+            'daily': _load_section_domains(dynamodb_client, sld, 'WM_DAILYUPDATE'),
+            'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYUPDATE'),
+            'monthly': _load_section_domains(dynamodb_client, sld, 'WM_MONTHLY', 'WM_MONTHLYUPDATE'),
+            'quarterly': _load_section_domains(dynamodb_client, sld, 'WM_QUARTERLYUPDATE'),
+        },
+        'expiredRegistrations': {
+            'daily': _load_section_domains(dynamodb_client, sld, 'WM_DAILYREMOVE'),
+            'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYREMOVE'),
+            'monthly': _load_section_domains(dynamodb_client, sld, 'WM_MONTHLYREMOVE'),
+            'quarterly': _load_section_domains(dynamodb_client, sld, 'WM_QUARTERLYREMOVE'),
+        },
+        'allDomains': _load_section_domains(dynamodb_client, sld, 'WM_FULL'),
+    }
+
+
 def _render_form(authorization_header, identity, domains=None):
     auth_header_json = json.dumps(authorization_header)
     safe_email = html.escape(identity.get('email', 'unknown'))
@@ -226,7 +367,9 @@ def _render_form(authorization_header, identity, domains=None):
         domains_section = '''
             <section class="domains">
                 <h2>Domains</h2>
-                <p class="domains-empty">Empty!</p>
+                <ul>
+                    <li>Empty!</li>
+                </ul>
             </section>
         '''
     return f'''<!DOCTYPE html>
@@ -339,7 +482,48 @@ def _render_form(authorization_header, identity, domains=None):
             text-align: left;
         }}
 
-        button {{
+        .domain-sections {{
+            margin-top: 24px;
+            border-top: 1px solid #dbe5f0;
+            padding-top: 16px;
+            text-align: left;
+        }}
+
+        .domain-sections h3 {{
+            margin: 16px 0 8px;
+            font-size: 1rem;
+            color: #10233c;
+        }}
+
+        .domain-sections h3:first-child {{
+            margin-top: 0;
+        }}
+
+        .domain-sections h4 {{
+            margin: 12px 0 8px;
+            font-size: 0.95rem;
+            font-weight: 400;
+            color: #10233c;
+            text-decoration: underline;
+        }}
+
+        .domain-sections ul {{
+            margin: 0;
+            padding-left: 20px;
+        }}
+
+        .domain-sections ol {{
+            margin: 0;
+            padding-left: 20px;
+        }}
+
+        .domain-sections li {{
+            margin-bottom: 6px;
+        }}
+
+        .btn-primary {{
+            display: inline-block;
+            margin-top: 16px;
             border: 0;
             border-radius: 999px;
             background: #0e7490;
@@ -347,6 +531,11 @@ def _render_form(authorization_header, identity, domains=None):
             cursor: pointer;
             font-size: 1rem;
             padding: 12px 28px;
+            text-decoration: none;
+        }}
+
+        .actions .btn-primary {{
+            margin-top: 0;
         }}
     </style>
 </head>
@@ -371,7 +560,7 @@ def _render_form(authorization_header, identity, domains=None):
             <p id="entry-print"></p>
 
             <div class="actions">
-                <button type="button" onclick="submitHomeForm()">Submit</button>
+                <button class="btn-primary" type="button" onclick="submitHomeForm()">Submit</button>
             </div>
 
             {domains_section}
@@ -468,17 +657,111 @@ def _render_form(authorization_header, identity, domains=None):
             .catch(() => {{ window.location.href = '{API_ENDPOINT}'; }});
         }}
 
-        function showDomain(domain) {{
-            const safeD = domain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        function escapeHtml(value) {{
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }}
+
+        function renderNumberedList(items) {{
+            if (!Array.isArray(items) || items.length === 0) {{
+                return '<ul><li>Empty!</li></ul>';
+            }}
+
+            const rows = items.map(item => '<li>' + escapeHtml(item) + '</li>').join('');
+            return '<ol>' + rows + '</ol>';
+        }}
+
+        function getEmptySections() {{
+            return {{
+                suspect: {{
+                    openSourceIntelligence: [],
+                    domainsMonitorSubscription: []
+                }},
+                newRegistrations: {{
+                    daily: [],
+                    weekly: [],
+                    monthly: [],
+                    quarterly: []
+                }},
+                expiredRegistrations: {{
+                    daily: [],
+                    weekly: [],
+                    monthly: [],
+                    quarterly: []
+                }},
+                allDomains: []
+            }};
+        }}
+
+        async function fetchDomainSections(domain) {{
+            const authHeader = {auth_header_json};
+            const fallback = getEmptySections();
+
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader || ''
+                    }},
+                    body: JSON.stringify({{ action: 'GetDomainSections', entry: domain }})
+                }});
+
+                if (!response.ok) {{
+                    return fallback;
+                }}
+
+                const payload = await response.json();
+                return payload.sections || fallback;
+            }} catch (_err) {{
+                return fallback;
+            }}
+        }}
+
+        function renderDomainView(domain, sections) {{
+            const safeDomain = escapeHtml(domain);
+            const safeSections = sections || getEmptySections();
+
             document.querySelector('main').innerHTML =
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
-                '<p><strong>Domain:</strong> ' + safeD + '</p>' +
+                '<p><strong>Domain:</strong> ' + safeDomain + '</p>' +
                 '<div style="text-align:center;">' +
-                '<a href="#" onclick="goHome(); return false;" ' +
-                'style="display:inline-block;margin-top:16px;border:0;border-radius:999px;' +
-                'background:#0e7490;color:#ffffff;cursor:pointer;font-size:1rem;padding:12px 28px;text-decoration:none;">' +
-                'Back</a>' +
+                '<a class="btn-primary" href="#" onclick="goHome(); return false;">Back</a>' +
+                '</div>' +
+                '<div class="domain-sections">' +
+                '<h3>Suspect Domains</h3>' +
+                '<h4>Open Source Intelligence</h4>' +
+                renderNumberedList(safeSections.suspect?.openSourceIntelligence || []) +
+                '<h4>Domains Monitor Subscription</h4>' +
+                renderNumberedList(safeSections.suspect?.domainsMonitorSubscription || []) +
+                '<h3>New Registrations</h3>' +
+                '<h4>Daily</h4>' +
+                renderNumberedList(safeSections.newRegistrations?.daily || []) +
+                '<h4>Weekly</h4>' +
+                renderNumberedList(safeSections.newRegistrations?.weekly || []) +
+                '<h4>Monthly</h4>' +
+                renderNumberedList(safeSections.newRegistrations?.monthly || []) +
+                '<h4>Quarterly</h4>' +
+                renderNumberedList(safeSections.newRegistrations?.quarterly || []) +
+                '<h3>Expired Registrations</h3>' +
+                '<h4>Daily</h4>' +
+                renderNumberedList(safeSections.expiredRegistrations?.daily || []) +
+                '<h4>Weekly</h4>' +
+                renderNumberedList(safeSections.expiredRegistrations?.weekly || []) +
+                '<h4>Monthly</h4>' +
+                renderNumberedList(safeSections.expiredRegistrations?.monthly || []) +
+                '<h4>Quarterly</h4>' +
+                renderNumberedList(safeSections.expiredRegistrations?.quarterly || []) +
+                '<h3>All Domains</h3>' +
+                renderNumberedList(safeSections.allDomains || []) +
                 '</div>';
+        }}
+
+        async function showDomain(domain) {{
+            const sections = await fetchDomainSections(domain);
+            renderDomainView(domain, sections);
         }}
     </script>
 </body>
@@ -591,15 +874,30 @@ def handler(event, _context):
         except json.JSONDecodeError:
             payload = {}
 
-        identity = _fetch_user_identity(authorization_header)
         action = payload.get('action', 'PutItem')
+        normalized_action = (action or '').strip().lower()
+
+        if normalized_action == 'getdomainsections':
+            try:
+                sections = _get_domain_sections(payload.get('entry', ''))
+            except Exception as exc:
+                print(f'GetDomainSections failed: {exc}')
+                sections = {}
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'sections': sections}),
+                'headers': {
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
+            }
+
+        identity = _fetch_user_identity(authorization_header)
         domain, success, message = _process_submission(
             payload.get('entry', ''),
             identity.get('email', 'unknown'),
             action,
         )
 
-        normalized_action = (action or '').strip().lower()
         operation = 'deletion' if normalized_action == 'deleteitem' else 'submission'
         if normalized_action == 'putitem':
             if success:
