@@ -59,6 +59,18 @@ class LunkerDatabase(Stack):
             ]
         )
 
+        table.add_global_secondary_index(
+            index_name = 'pk-tk-index',
+            partition_key = {
+                'name': 'pk',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            sort_key = {
+                'name': 'tk',
+                'type': _dynamodb.AttributeType.STRING
+            }
+        )
+
     ### RESOURCE POLICY ###
 
         table.add_to_resource_policy(

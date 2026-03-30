@@ -128,6 +128,7 @@ def _put_lunker_domain(table, email, domain):
         Item={
             'pk': 'LUNKER#',
             'sk': f'LUNKER#{email}#{domain}',
+            'tk': f'LUNKER#{sld}#{email}#{domain}',
             'domain': domain,
             'email': email,
             'sld': sld,
