@@ -81,6 +81,7 @@ class LunkerDatabase(Stack):
                     _iam.OrganizationPrincipal(organization_id = organization.string_value)
                 ],
                 actions = [
+                    'dynamodb:DescribeTable',
                     'dynamodb:GetItem',
                     'dynamodb:Query'
                 ],
