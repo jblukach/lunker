@@ -737,7 +737,7 @@ def _render_form(authorization_header, identity, domains=None):
                 renderNumberedList(safeSections.suspect?.openSourceIntelligence || []) +
                 '<h4>Domains Monitor Subscription</h4>' +
                 renderNumberedList(safeSections.suspect?.domainsMonitorSubscription || []) +
-                '<h3>New Registrations</h3>' +
+                '<h3>New Domains</h3>' +
                 '<h4>Daily</h4>' +
                 renderNumberedList(safeSections.newRegistrations?.daily || []) +
                 '<h4>Weekly</h4>' +
@@ -746,7 +746,7 @@ def _render_form(authorization_header, identity, domains=None):
                 renderNumberedList(safeSections.newRegistrations?.monthly || []) +
                 '<h4>Quarterly</h4>' +
                 renderNumberedList(safeSections.newRegistrations?.quarterly || []) +
-                '<h3>Expired Registrations</h3>' +
+                '<h3>Expired Domains</h3>' +
                 '<h4>Daily</h4>' +
                 renderNumberedList(safeSections.expiredRegistrations?.daily || []) +
                 '<h4>Weekly</h4>' +
