@@ -618,11 +618,34 @@ def _render_form(authorization_header, identity, domains=None):
             font-size: 1rem;
         }}
 
+        .help-modal h3 {{
+            margin: 14px 0 8px;
+            font-size: 0.98rem;
+            color: #10233c;
+        }}
+
+        .help-modal h4 {{
+            margin: 12px 0 8px;
+            font-size: 0.92rem;
+            color: #10233c;
+        }}
+
         .help-steps {{
             margin: 0;
             padding-left: 20px;
             color: #486581;
             font-size: 0.92rem;
+        }}
+
+        .help-rules {{
+            margin: 0;
+            padding-left: 20px;
+            color: #486581;
+            font-size: 0.9rem;
+        }}
+
+        .help-rules li {{
+            margin-bottom: 8px;
         }}
 
         .help-steps li {{
@@ -661,21 +684,61 @@ def _render_form(authorization_header, identity, domains=None):
     <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
         <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
             <h2 style="text-align:center">Lunker Help</h2>
+
+            <h3>Add Domain</h3>
             <ol class="help-steps">
                 <li>
-                    <span>Add a Domain to Monitor</span>
-                    Enter a second-level domain (e.g., example.com) in the Domain field, select <b>Add</b>, and click <b>Submit</b>.
-                    <img src="https://cdn.lukach.io/help/home-add.png" alt="Add a Domain">
+                    <span>Step 1: Enter a Domain</span>
+                    In the Domain field, enter a second-level domain (for example: example.com), keep <b>Add</b> selected, then click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/add-domain.png" alt="Add Domain">
                 </li>
                 <li>
-                    <span>Remove a Domain</span>
-                    Enter an existing domain from your list, select <b>Remove</b>, and click <b>Submit</b> to delete it.
-                    <img src="https://cdn.lukach.io/help/home-remove.png" alt="Remove a Domain">
+                    <span>Step 2: Domain Validation Runs</span>
+                    Client-side validation runs before submit continues.
+                    <img src="https://cdn.lukach.io/help/domain-validation.png" alt="Domain Validation">
                 </li>
                 <li>
-                    <span>View Domain Intelligence</span>
-                    Click any domain link in your Domains list to view intelligence data including new registrations, expired registrations, and suspect domains.
-                    <img src="https://cdn.lukach.io/help/home-intel.png" alt="View Domain Intelligence">
+                    <span>Step 3: Submission Failed Case</span>
+                    If backend validation fails, the app shows a failed submission result.
+                    <img src="https://cdn.lukach.io/help/submission-failed.png" alt="Submission Failed">
+                </li>
+                <li>
+                    <span>Step 4: Successful Add</span>
+                    If all checks pass, the domain is stored and success is shown.
+                    <img src="https://cdn.lukach.io/help/successful-add.png" alt="Successful Add">
+                </li>
+            </ol>
+
+            <h4>Domain Validation On Submit</h4>
+            <ul class="help-rules">
+                <li>Domain is required (cannot be empty).</li>
+                <li>Must include one dot and exactly two labels (example.com format).</li>
+                <li>No subdomains are allowed.</li>
+                <li>Second-level label regex: starts/ends alphanumeric, dashes allowed only inside.</li>
+                <li>Top-level label regex: 2-63 chars using alphanumeric or dash.</li>
+                <li>Entry is normalized to lowercase and trimmed.</li>
+            </ul>
+
+            <h4>Validation That Produces Submission Failed</h4>
+            <ul class="help-rules">
+                <li>Client-side validation rules above fail.</li>
+                <li>User email cannot be resolved from token (unknown identity).</li>
+                <li>Top-level domain is not found in the TLD table.</li>
+                <li>POST request returns non-OK HTTP status.</li>
+                <li>Network or runtime fetch error during submit.</li>
+            </ul>
+
+            <h3>Remove Domain</h3>
+            <ol class="help-steps">
+                <li>
+                    <span>Step 1: Select Remove and Submit</span>
+                    Enter an existing domain, select <b>Remove</b>, then click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/remove-domain.png" alt="Remove Domain">
+                </li>
+                <li>
+                    <span>Step 2: Successful Delete</span>
+                    If the request succeeds, the domain is removed and a success result is shown.
+                    <img src="https://cdn.lukach.io/help/successful-delete.png" alt="Successful Delete">
                 </li>
             </ol>
             <div style="text-align:center">
@@ -1081,11 +1144,34 @@ def _render_result(action, entry, message, success=True, authorization_header=''
             font-size: 1rem;
         }}
 
+        .help-modal h3 {{
+            margin: 14px 0 8px;
+            font-size: 0.98rem;
+            color: #10233c;
+        }}
+
+        .help-modal h4 {{
+            margin: 12px 0 8px;
+            font-size: 0.92rem;
+            color: #10233c;
+        }}
+
         .help-steps {{
             margin: 0;
             padding-left: 20px;
             color: #486581;
             font-size: 0.92rem;
+        }}
+
+        .help-rules {{
+            margin: 0;
+            padding-left: 20px;
+            color: #486581;
+            font-size: 0.9rem;
+        }}
+
+        .help-rules li {{
+            margin-bottom: 8px;
         }}
 
         .help-steps li {{
@@ -1124,21 +1210,61 @@ def _render_result(action, entry, message, success=True, authorization_header=''
     <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
         <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
             <h2 style="text-align:center">Lunker Help</h2>
+
+            <h3>Add Domain</h3>
             <ol class="help-steps">
                 <li>
-                    <span>Add a Domain to Monitor</span>
-                    Enter a second-level domain (e.g., example.com) in the Domain field, select <b>Add</b>, and click <b>Submit</b>.
-                    <img src="https://cdn.lukach.io/help/home-add.png" alt="Add a Domain">
+                    <span>Step 1: Enter a Domain</span>
+                    In the Domain field, enter a second-level domain (for example: example.com), keep <b>Add</b> selected, then click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/add-domain.png" alt="Add Domain">
                 </li>
                 <li>
-                    <span>Remove a Domain</span>
-                    Enter an existing domain from your list, select <b>Remove</b>, and click <b>Submit</b> to delete it.
-                    <img src="https://cdn.lukach.io/help/home-remove.png" alt="Remove a Domain">
+                    <span>Step 2: Domain Validation Runs</span>
+                    Client-side validation runs before submit continues.
+                    <img src="https://cdn.lukach.io/help/domain-validation.png" alt="Domain Validation">
                 </li>
                 <li>
-                    <span>View Domain Intelligence</span>
-                    Click any domain link in your Domains list to view intelligence data including new registrations, expired registrations, and suspect domains.
-                    <img src="https://cdn.lukach.io/help/home-intel.png" alt="View Domain Intelligence">
+                    <span>Step 3: Submission Failed Case</span>
+                    If backend validation fails, the app shows a failed submission result.
+                    <img src="https://cdn.lukach.io/help/submission-failed.png" alt="Submission Failed">
+                </li>
+                <li>
+                    <span>Step 4: Successful Add</span>
+                    If all checks pass, the domain is stored and success is shown.
+                    <img src="https://cdn.lukach.io/help/successful-add.png" alt="Successful Add">
+                </li>
+            </ol>
+
+            <h4>Domain Validation On Submit</h4>
+            <ul class="help-rules">
+                <li>Domain is required (cannot be empty).</li>
+                <li>Must include one dot and exactly two labels (example.com format).</li>
+                <li>No subdomains are allowed.</li>
+                <li>Second-level label regex: starts/ends alphanumeric, dashes allowed only inside.</li>
+                <li>Top-level label regex: 2-63 chars using alphanumeric or dash.</li>
+                <li>Entry is normalized to lowercase and trimmed.</li>
+            </ul>
+
+            <h4>Validation That Produces Submission Failed</h4>
+            <ul class="help-rules">
+                <li>Client-side validation rules above fail.</li>
+                <li>User email cannot be resolved from token (unknown identity).</li>
+                <li>Top-level domain is not found in the TLD table.</li>
+                <li>POST request returns non-OK HTTP status.</li>
+                <li>Network or runtime fetch error during submit.</li>
+            </ul>
+
+            <h3>Remove Domain</h3>
+            <ol class="help-steps">
+                <li>
+                    <span>Step 1: Select Remove and Submit</span>
+                    Enter an existing domain, select <b>Remove</b>, then click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/remove-domain.png" alt="Remove Domain">
+                </li>
+                <li>
+                    <span>Step 2: Successful Delete</span>
+                    If the request succeeds, the domain is removed and a success result is shown.
+                    <img src="https://cdn.lukach.io/help/successful-delete.png" alt="Successful Delete">
                 </li>
             </ol>
             <div style="text-align:center">
