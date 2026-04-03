@@ -76,9 +76,14 @@ class LunkerStackUse1(Stack):
 
     ### PARAMETER ###
 
-        organization = _ssm.StringParameter.from_string_parameter_attributes(
-            self, 'organization',
-            parameter_name = '/organization/id'
+        apigateway = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'apigateway',
+            parameter_name = '/account/api'
+        )
+
+        cognito = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'cognito',
+            parameter_name = '/account/cognito'
         )
 
         webmonitor = _ssm.StringParameter.from_string_parameter_attributes(
@@ -126,8 +131,19 @@ class LunkerStackUse1(Stack):
             )
         )
 
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    'secretsmanager:GetSecretValue'
+                ],
+                resources = [
+                    'arn:aws:secretsmanager:us-east-1:'+cognito.string_value+':secret:clientid*'
+                ]
+            )
+        )
+
         composite = _iam.CompositePrincipal(
-            _iam.OrganizationPrincipal(organization.string_value),
+            _iam.AccountPrincipal(apigateway.string_value),
             _iam.ServicePrincipal('apigateway.amazonaws.com')
         )
 
@@ -143,6 +159,7 @@ class LunkerStackUse1(Stack):
             environment = dict(
                 LUNKER_TABLE = 'lunker',
                 TLD_TABLE = table.table_name,
+                CLIENTID_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:'+cognito.string_value+':secret:clientid',
                 WM_OSINT = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/osint',
                 WM_MALWARE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/malware',
                 WM_DAILYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/dailyupdate',

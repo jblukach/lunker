@@ -387,7 +387,12 @@ def _render_form(authorization_header, identity, domains=None):
             color: #10233c;
         }}
 
+        body.modal-open {{
+            overflow: hidden;
+        }}
+
         main {{
+            position: relative;
             max-width: 540px;
             margin: 48px auto;
             padding: 32px;
@@ -538,10 +543,151 @@ def _render_form(authorization_header, identity, domains=None):
         .actions .btn-primary {{
             margin-top: 0;
         }}
+
+        .card-actions {{
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 8px;
+        }}
+
+        .help-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .help-button:hover {{
+            background: #f8fafc;
+        }}
+
+        .logoff-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .logoff-button:hover {{
+            background: #f8fafc;
+        }}
+
+        .help-modal-overlay {{
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(16, 35, 60, 0.45);
+            padding: 16px;
+            z-index: 1000;
+        }}
+
+        .help-modal-overlay.open {{
+            display: flex;
+        }}
+
+        .help-modal {{
+            width: min(420px, 100%);
+            padding: 18px 18px 14px;
+            border: 1px solid #dbe4ee;
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 18px 36px rgba(16, 35, 60, 0.2);
+            text-align: left;
+            max-height: 80vh;
+            overflow-y: auto;
+        }}
+
+        .help-modal h2 {{
+            margin: 0 0 12px;
+            font-size: 1rem;
+        }}
+
+        .help-steps {{
+            margin: 0;
+            padding-left: 20px;
+            color: #486581;
+            font-size: 0.92rem;
+        }}
+
+        .help-steps li {{
+            margin-bottom: 12px;
+        }}
+
+        .help-steps span {{
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #10233c;
+        }}
+
+        .help-steps img {{
+            display: block;
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #dbe4ee;
+            margin: 0;
+        }}
+
+        .help-close {{
+            display: inline-block;
+            margin-top: 12px;
+            border: 0;
+            border-radius: 999px;
+            background: #0e7490;
+            color: #ffffff;
+            font-size: 1rem;
+            padding: 12px 28px;
+            cursor: pointer;
+        }}
     </style>
 </head>
 <body>
+    <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
+        <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
+            <h2 style="text-align:center">Lunker Help</h2>
+            <ol class="help-steps">
+                <li>
+                    <span>Add a Domain to Monitor</span>
+                    Enter a second-level domain (e.g., example.com) in the Domain field, select <b>Add</b>, and click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/home-add.png" alt="Add a Domain">
+                </li>
+                <li>
+                    <span>Remove a Domain</span>
+                    Enter an existing domain from your list, select <b>Remove</b>, and click <b>Submit</b> to delete it.
+                    <img src="https://cdn.lukach.io/help/home-remove.png" alt="Remove a Domain">
+                </li>
+                <li>
+                    <span>View Domain Intelligence</span>
+                    Click any domain link in your Domains list to view intelligence data including new registrations, expired registrations, and suspect domains.
+                    <img src="https://cdn.lukach.io/help/home-intel.png" alt="View Domain Intelligence">
+                </li>
+            </ol>
+            <div style="text-align:center">
+                <button class="help-close" type="button" onclick="closeHelp()">Close</button>
+            </div>
+        </div>
+    </section>
     <main>
+        <div class="card-actions">
+            <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
+            <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
+        </div>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
 
         <div class="identity">
@@ -726,6 +872,10 @@ def _render_form(authorization_header, identity, domains=None):
             const safeSections = sections || getEmptySections();
 
             document.querySelector('main').innerHTML =
+                '<div class="card-actions">' +
+                '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
+                '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
+                '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
                 '<p><strong>Domain:</strong> ' + safeDomain + '</p>' +
                 '<div style="text-align:center;">' +
@@ -764,6 +914,29 @@ def _render_form(authorization_header, identity, domains=None):
             const sections = await fetchDomainSections(domain);
             renderDomainView(domain, sections);
         }}
+
+        function toggleHelp() {{
+            const modal = document.getElementById('lunker-help');
+            modal.classList.toggle('open');
+            document.body.classList.toggle('modal-open', modal.classList.contains('open'));
+        }}
+
+        function closeHelp() {{
+            const modal = document.getElementById('lunker-help');
+            modal.classList.remove('open');
+            document.body.classList.remove('modal-open');
+        }}
+
+        function logOff() {{
+            window.location.href = 'https://hello-use1.lukach.io/logout';
+        }}
+
+        window.addEventListener('click', function(event) {{
+            const modal = document.getElementById('lunker-help');
+            if (event.target === modal) {{
+                closeHelp();
+            }}
+        }});
     </script>
 </body>
 </html>'''
@@ -793,6 +966,7 @@ def _render_result(action, entry, message, success=True, authorization_header=''
         }}
 
         main {{
+            position: relative;
             max-width: 540px;
             margin: 48px auto;
             padding: 32px;
@@ -832,10 +1006,151 @@ def _render_result(action, entry, message, success=True, authorization_header=''
             padding: 12px 28px;
             text-decoration: none;
         }}
+
+        .card-actions {{
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 8px;
+        }}
+
+        .help-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .help-button:hover {{
+            background: #f8fafc;
+        }}
+
+        .logoff-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .logoff-button:hover {{
+            background: #f8fafc;
+        }}
+
+        .help-modal-overlay {{
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(16, 35, 60, 0.45);
+            padding: 16px;
+            z-index: 1000;
+        }}
+
+        .help-modal-overlay.open {{
+            display: flex;
+        }}
+
+        .help-modal {{
+            width: min(420px, 100%);
+            padding: 18px 18px 14px;
+            border: 1px solid #dbe4ee;
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 18px 36px rgba(16, 35, 60, 0.2);
+            text-align: left;
+            max-height: 80vh;
+            overflow-y: auto;
+        }}
+
+        .help-modal h2 {{
+            margin: 0 0 12px;
+            font-size: 1rem;
+        }}
+
+        .help-steps {{
+            margin: 0;
+            padding-left: 20px;
+            color: #486581;
+            font-size: 0.92rem;
+        }}
+
+        .help-steps li {{
+            margin-bottom: 12px;
+        }}
+
+        .help-steps span {{
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #10233c;
+        }}
+
+        .help-steps img {{
+            display: block;
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #dbe4ee;
+            margin: 0;
+        }}
+
+        .help-close {{
+            display: inline-block;
+            margin-top: 12px;
+            border: 0;
+            border-radius: 999px;
+            background: #0e7490;
+            color: #ffffff;
+            font-size: 1rem;
+            padding: 12px 28px;
+            cursor: pointer;
+        }}
     </style>
 </head>
 <body>
+    <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
+        <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
+            <h2 style="text-align:center">Lunker Help</h2>
+            <ol class="help-steps">
+                <li>
+                    <span>Add a Domain to Monitor</span>
+                    Enter a second-level domain (e.g., example.com) in the Domain field, select <b>Add</b>, and click <b>Submit</b>.
+                    <img src="https://cdn.lukach.io/help/home-add.png" alt="Add a Domain">
+                </li>
+                <li>
+                    <span>Remove a Domain</span>
+                    Enter an existing domain from your list, select <b>Remove</b>, and click <b>Submit</b> to delete it.
+                    <img src="https://cdn.lukach.io/help/home-remove.png" alt="Remove a Domain">
+                </li>
+                <li>
+                    <span>View Domain Intelligence</span>
+                    Click any domain link in your Domains list to view intelligence data including new registrations, expired registrations, and suspect domains.
+                    <img src="https://cdn.lukach.io/help/home-intel.png" alt="View Domain Intelligence">
+                </li>
+            </ol>
+            <div style="text-align:center">
+                <button class="help-close" type="button" onclick="closeHelp()">Close</button>
+            </div>
+        </div>
+    </section>
     <main>
+        <div class="card-actions">
+            <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
+            <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
+        </div>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
         <h1>{heading}</h1>
         <p style="color:{message_color}; white-space: pre-line;">{safe_message}</p>
@@ -858,6 +1173,29 @@ def _render_result(action, entry, message, success=True, authorization_header=''
                 window.location.href = '{API_ENDPOINT}';
             }}
         }}
+
+        function toggleHelp() {{
+            const modal = document.getElementById('lunker-help');
+            modal.classList.toggle('open');
+            document.body.classList.toggle('modal-open', modal.classList.contains('open'));
+        }}
+
+        function closeHelp() {{
+            const modal = document.getElementById('lunker-help');
+            modal.classList.remove('open');
+            document.body.classList.remove('modal-open');
+        }}
+
+        function logOff() {{
+            window.location.href = 'https://hello-use1.lukach.io/logout';
+        }}
+
+        window.addEventListener('click', function(event) {{
+            const modal = document.getElementById('lunker-help');
+            if (event.target === modal) {{
+                closeHelp();
+            }}
+        }});
     </script>
 </body>
 </html>'''

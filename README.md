@@ -68,36 +68,6 @@ cdk deploy LunkerDatabase
 
 The `CDK_DEFAULT_ACCOUNT` environment variable must be set (or resolved automatically via the AWS CLI) before deploying.
 
-## Web UI
-
-### Landing Page
-
-![Landing page](images/1-landing-page.png)
-
-### Sign In
-
-![Sign-in page](images/2-signin-page.png)
-
-![No passwords required](images/3-no-passwords.png)
-
-### Authentication Result
-
-![Successful sign-in](images/4-successful-signin.png)
-
-![Failed sign-in](images/5-failed-signin.png)
-
-### Add a Domain
-
-![Home page](images/6-home-page.png)
-
-![Domain added successfully](images/7-add-success.png)
-
-### Remove a Domain
-
-![Remove domain](images/8-remove-domain.png)
-
-![Domain removed successfully](images/9-del-success.png)
-
 ## Project Structure
 
 ```
