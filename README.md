@@ -1,7 +1,5 @@
 # Lunker
 
-![Lunker Logo](images/lunker-full.png)
-
 Lunker is a multi-region AWS CDK application for registering second-level domains for threat intelligence monitoring. Users authenticate with Amazon Cognito, manage a personal watchlist, and review related results sourced from the [webmonitor](https://github.com/jblukach/webmonitor) service.
 
 ## Features
