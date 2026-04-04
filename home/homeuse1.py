@@ -315,6 +315,95 @@ def _load_section_domains(dynamodb_client, sld, *env_keys):
     return []
 
 
+def _normalize_search_field(value):
+    normalized_value = _normalize_domain(value)
+    if not normalized_value:
+        return ''
+
+    if '.' in normalized_value:
+        return normalized_value.split('.', 1)[0]
+
+    return normalized_value
+
+
+def _extract_search_field_value(item):
+    if not isinstance(item, dict):
+        return ''
+
+    for key in ('search', 'searchField', 'searchfield', 'sld'):
+        normalized_value = _normalize_search_field(item.get(key))
+        if normalized_value:
+            return normalized_value
+
+    return ''
+
+
+def _query_search_fields(dynamodb_client, table_identifier):
+    search_fields = []
+    expression_values = {
+        ':pk': {'S': 'LUNKER#'},
+        ':sk': {'S': 'LUNKER#'},
+    }
+    query_kwargs = {
+        'TableName': table_identifier,
+        'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
+        'ExpressionAttributeValues': expression_values,
+        'ProjectionExpression': '#sk, #search, #searchField, #searchfield, #sld',
+        'ExpressionAttributeNames': {
+            '#sk': 'sk',
+            '#search': 'search',
+            '#searchField': 'searchField',
+            '#searchfield': 'searchfield',
+            '#sld': 'sld',
+        },
+    }
+
+    while True:
+        response = dynamodb_client.query(**query_kwargs)
+        for item in response.get('Items', []):
+            normalized_item = {
+                key: next(iter(value.values())) if isinstance(value, dict) and value else value
+                for key, value in item.items()
+            }
+            search_field = _extract_search_field_value(normalized_item)
+            if search_field:
+                search_fields.append(search_field)
+
+        last_evaluated_key = response.get('LastEvaluatedKey')
+        if not last_evaluated_key:
+            break
+        query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+    return sorted(set(search_fields))
+
+
+def _get_search_field_matches(domains):
+    normalized_slds = set()
+    for domain in domains or []:
+        normalized_domain = _normalize_domain(domain)
+        is_valid, _ = _validate_domain(normalized_domain)
+        if not is_valid:
+            continue
+
+        sld, _ = _split_domain(normalized_domain)
+        normalized_slds.add(sld)
+
+    if not normalized_slds:
+        return set()
+
+    dynamodb_client = boto3.client('dynamodb')
+    search_fields = set()
+
+    for env_key in ('WM_DAILYUPDATE', 'WM_DAILYREMOVE', 'WM_MALWARE', 'WM_OSINT'):
+        for table_identifier in _resolve_table_identifiers(env_key):
+            try:
+                search_fields.update(_query_search_fields(dynamodb_client, table_identifier))
+            except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
+                print(f'Search-field query failed on table {table_identifier}: {exc}')
+
+    return normalized_slds.intersection(search_fields)
+
+
 def _get_domain_sections(domain):
     normalized_domain = _normalize_domain(domain)
     is_valid, _ = _validate_domain(normalized_domain)
@@ -345,18 +434,31 @@ def _get_domain_sections(domain):
     }
 
 
-def _render_form(authorization_header, identity, domains=None):
+def _render_form(authorization_header, identity, domains=None, matched_slds=None):
     auth_header_json = json.dumps(authorization_header)
     safe_email = html.escape(identity.get('email', 'unknown'))
     safe_region = html.escape(identity.get('region', 'unknown'))
     domains = domains or []
+    matched_slds = matched_slds or set()
     if domains:
-        domain_list_html = ''.join(
-            '<li><a href="#" onclick="showDomain(\'{d}\'); return false;">{d}</a></li>'.format(
-                d=html.escape(domain)
+        domain_items = []
+        for domain in domains:
+            css_class = ''
+            normalized_domain = _normalize_domain(domain)
+            is_valid, _ = _validate_domain(normalized_domain)
+            if is_valid:
+                sld, _ = _split_domain(normalized_domain)
+                if sld in matched_slds:
+                    css_class = ' class="matched-domain"'
+
+            domain_items.append(
+                '<li><a{css_class} href="#" onclick="showDomain(\'{d}\'); return false;">{d}</a></li>'.format(
+                    css_class=css_class,
+                    d=html.escape(domain)
+                )
             )
-            for domain in domains
-        )
+
+        domain_list_html = ''.join(domain_items)
         domains_section = f'''
             <section class="domains">
                 <h2>Domains</h2>
@@ -478,6 +580,11 @@ def _render_form(authorization_header, identity, domains=None):
         .domains a {{
             color: #0e7490;
             text-decoration: none;
+        }}
+
+        .domains a.matched-domain {{
+            color: #ff0000;
+            font-weight: 700;
         }}
 
         .domains a:hover {{
@@ -1381,7 +1488,8 @@ def handler(event, _context):
         dynamodb = boto3.resource('dynamodb')
         lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
         domains = _list_lunker_domains(lunker_table, identity.get('email', 'unknown'))
-        response_html = _render_form(authorization_header, identity, domains)
+        matched_slds = _get_search_field_matches(domains)
+        response_html = _render_form(authorization_header, identity, domains, matched_slds)
 
     return {
         'statusCode': 200,
