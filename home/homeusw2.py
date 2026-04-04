@@ -8,6 +8,7 @@ import os
 import requests
 
 API_ENDPOINT = 'https://usw2.api.lukach.io/home'
+LOGOUT_ENDPOINT = 'https://usw2.api.lukach.io/auth?action=logout'
 USER_INFO_ENDPOINT = 'https://hello-usw2.lukach.io/oauth2/userInfo'
 
 def _get_method(event):
@@ -991,7 +992,7 @@ def _render_form(authorization_header, identity, domains=None):
         }}
 
         function logOff() {{
-            window.location.href = 'https://hello-usw2.lukach.io/logout';
+            window.location.href = '{LOGOUT_ENDPOINT}';
         }}
 
         window.addEventListener('click', function(event) {{
@@ -1313,7 +1314,7 @@ def _render_result(action, entry, message, success=True, authorization_header=''
         }}
 
         function logOff() {{
-            window.location.href = 'https://hello-usw2.lukach.io/logout';
+            window.location.href = '{LOGOUT_ENDPOINT}';
         }}
 
         window.addEventListener('click', function(event) {{
