@@ -1,76 +1,94 @@
 # Lunker
 
-<p align="center">
-  <img src="images/lunker-full.png" alt="Lunker Logo" width="300"/>
-</p>
+![Lunker Logo](images/lunker-full.png)
 
-Lunker is a multi-region AWS CDK application that allows users to register domains for threat intelligence monitoring. Users sign in with Amazon Cognito (passwordless) and manage a personal list of domains that are automatically checked against the [webmonitor](https://github.com/jblukach/webmonitor) threat intelligence service.
+Lunker is a multi-region AWS CDK application for registering second-level domains for threat intelligence monitoring. Users authenticate with Amazon Cognito, manage a personal watchlist, and review related results sourced from the [webmonitor](https://github.com/jblukach/webmonitor) service.
 
 ## Features
 
-- **Passwordless authentication** via Amazon Cognito
-- **Domain management** — add or remove domains to monitor (second-level domains only, e.g. `example.com`)
-- **TLD validation** against the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), refreshed daily
-- **Automated threat lookups** triggered on domain registration via DynamoDB Streams
-- **Multi-region** deployment across `us-east-1`, `us-east-2`, and `us-west-2`
-- **Global DynamoDB table** replicated across all three regions
-- **GitHub Actions CI/CD** via OIDC — no long-lived credentials required
+- **Amazon Cognito authentication** for the hosted sign-in flow
+- **Domain management** — add or remove second-level domains such as `example.com`
+- **TLD validation** using the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), refreshed daily
+- **Threat intelligence enrichment** triggered automatically when a domain is registered
+- **Saved-domain insights** — clicking a saved domain loads related sections such as suspect domains, new registrations, expired registrations, and all known domains
+- **Matched-domain highlighting** — domains with matching search-field hits are emphasized in red on the home page
+- **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
+- **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
 
 ## Architecture
 
-Four AWS CDK stacks are deployed to provide full multi-region coverage:
+The application is deployed as four CDK stacks:
 
 | Stack | Region | Purpose |
-|---|---|---|
-| `LunkerDatabase` | us-east-2 | Global DynamoDB table, DynamoDB Streams, action Lambda |
-| `LunkerStackUse1` | us-east-1 | Home Lambda (API), TLD Lambda, TLD DynamoDB table |
-| `LunkerStackUse2` | us-east-2 | GitHub OIDC provider and IAM role for CI/CD |
-| `LunkerStackUsw2` | us-west-2 | Home Lambda (API), TLD Lambda, TLD DynamoDB table |
+| --- | --- | --- |
+| `LunkerDatabase` | `us-east-2` | Creates the global `lunker` DynamoDB table, stream processing, and the `action` Lambda |
+| `LunkerStackUse1` | `us-east-1` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-east-1` |
+| `LunkerStackUse2` | `us-east-2` | Creates the GitHub OIDC provider and IAM role used for CI/CD |
+| `LunkerStackUsw2` | `us-west-2` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-west-2` |
 
-### Lambda Functions
+### Lambda functions
 
-- **`action`** — Triggered by DynamoDB Streams on new domain inserts. Invokes the `searchlist` function in the webmonitor account to begin threat intelligence analysis.
-- **`home`** — REST API handler. Validates OAuth2 tokens via Cognito, then handles domain listing, adding, and removing.
-- **`tld`** — Runs daily at 10:00 UTC. Syncs the IANA TLD list into a regional DynamoDB table used to validate domain TLDs on submission.
+- **`action`** — triggered by DynamoDB Streams on new domain inserts and invokes the `searchlist` Lambda in the webmonitor account
+- **`home`** — renders the HTML UI and handles domain listing, add/remove actions, domain section lookups, and matched-domain highlighting
+- **`tld`** — runs daily at **10:00 UTC** to refresh the IANA TLD list in the regional `tld` table
 
-### DynamoDB Tables
+### DynamoDB tables
 
-- **`lunker`** — Global table (primary in `us-east-2`, replicas in `us-east-1` and `us-west-2`) storing user-to-domain mappings. Point-in-time recovery and deletion protection enabled.
-- **`tld`** — Regional table (per region) storing the current IANA TLD list for input validation.
+- **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings and enables PITR and deletion protection
+- **`tld`** — regional DynamoDB table used to validate top-level domains during submission
 
 ## Prerequisites
 
 - [AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html) v2
-- Python 3.13
-- AWS account bootstrapped with CDK qualifier `lukach`:
-  ```
+- Python **3.13**
+- An AWS environment bootstrapped with the CDK qualifier `lukach`:
+
+  ```bash
   cdk bootstrap --qualifier lukach
   ```
-- The following SSM parameters present in each deployment account/region:
+
+- The following SSM parameters available to the stacks:
   - `/organization/id` — AWS Organizations ID
-  - `/account/webmonitor` — Account ID of the webmonitor service account
-- S3 buckets containing a `requests.zip` Lambda layer:
-  - `packages-use1-lukach-io` (us-east-1)
-  - `packages-usw2-lukach-io` (us-west-2)
+  - `/account/api` — API Gateway account identifier used for invocation permissions
+  - `/account/cognito` — Cognito account identifier used for secret access
+  - `/account/webmonitor` — AWS account ID that owns the webmonitor service
+- S3 buckets containing the `requests.zip` Lambda layer:
+  - `packages-use1-lukach-io` in `us-east-1`
+  - `packages-usw2-lukach-io` in `us-west-2`
 
 ## Deployment
 
 ```bash
-# Install dependencies
+# Optional: create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install Python dependencies
 pip install -r requirements.txt
 
 # Deploy all stacks
-cdk deploy --all
+cdk deploy --profile lunker --all --require-approval never
 
 # Deploy a single stack
-cdk deploy LunkerDatabase
+cdk deploy --profile lunker LunkerDatabase --require-approval never
 ```
 
-The `CDK_DEFAULT_ACCOUNT` environment variable must be set (or resolved automatically via the AWS CLI) before deploying.
+`CDK_DEFAULT_ACCOUNT` must be set, or resolvable from the active AWS CLI profile, before deployment.
 
-## Project Structure
+## Home page behavior
 
-```
+After sign-in, the home page:
+
+1. lists the domains saved for the current user
+2. highlights matched domains in **red** when related search-field data is present
+3. lets the user add or remove a domain
+4. loads detailed domain sections on demand when a saved domain is clicked
+
+To keep the page responsive, the home handlers reuse HTTP connections and cache short-lived identity and highlight lookups during warm Lambda invocations.
+
+## Project structure
+
+```text
 app.py                    # CDK app entry point
 requirements.txt          # Python dependencies
 cdk.json                  # CDK configuration
@@ -82,8 +100,8 @@ lunker/
 action/
   action.py               # DynamoDB Streams Lambda handler
 home/
-  homeuse1.py             # Home API Lambda handler (us-east-1)
-  homeusw2.py             # Home API Lambda handler (us-west-2)
+  homeuse1.py             # Home API Lambda handler for us-east-1
+  homeusw2.py             # Home API Lambda handler for us-west-2
 tld/
   tld.py                  # IANA TLD sync Lambda handler
 ```

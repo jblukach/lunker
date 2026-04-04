@@ -5,11 +5,21 @@ from botocore.exceptions import BotoCoreError, ClientError
 import html
 import json
 import os
+import time
 import requests
 
 API_ENDPOINT = 'https://usw2.api.lukach.io/home'
 LOGOUT_ENDPOINT = 'https://usw2.api.lukach.io/auth?action=logout'
 USER_INFO_ENDPOINT = 'https://hello-usw2.lukach.io/oauth2/userInfo'
+
+HTTP_SESSION = requests.Session()
+IDENTITY_CACHE = {}
+IDENTITY_CACHE_TTL_SECONDS = 300
+IDENTITY_CACHE_MAX_ENTRIES = 256
+MATCHED_SLD_CACHE = {}
+MATCHED_SLD_CACHE_TTL_SECONDS = 60
+MATCHED_SLD_CACHE_MAX_ENTRIES = 256
+
 
 def _get_method(event):
     request_context = event.get('requestContext') or {}
@@ -47,19 +57,85 @@ def _normalize_authorization(authorization_header):
     return f'Bearer {value}'
 
 
+def _decode_jwt_payload(authorization_header):
+    normalized_authorization = _normalize_authorization(authorization_header)
+    if not normalized_authorization:
+        return {}
+
+    token = normalized_authorization.split(' ', 1)[1].strip()
+    token_parts = token.split('.')
+    if len(token_parts) < 2:
+        return {}
+
+    payload_segment = token_parts[1]
+    payload_segment += '=' * (-len(payload_segment) % 4)
+
+    try:
+        decoded_payload = base64.urlsafe_b64decode(payload_segment.encode('utf-8')).decode('utf-8')
+        payload = json.loads(decoded_payload)
+    except (ValueError, json.JSONDecodeError):
+        return {}
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _build_identity(payload, default_region):
+    return {
+        'email': (
+            payload.get('email')
+            or payload.get('username')
+            or payload.get('cognito:username')
+            or 'unknown'
+        ),
+        'region': (
+            payload.get('region')
+            or payload.get('custom:region')
+            or payload.get('zoneinfo')
+            or default_region
+        ),
+    }
+
+
+def _get_cached_identity(normalized_authorization):
+    cached_entry = IDENTITY_CACHE.get(normalized_authorization)
+    if not cached_entry:
+        return None
+
+    cached_at, identity = cached_entry
+    if (time.time() - cached_at) > IDENTITY_CACHE_TTL_SECONDS:
+        IDENTITY_CACHE.pop(normalized_authorization, None)
+        return None
+
+    return dict(identity)
+
+
+def _cache_identity(normalized_authorization, identity):
+    if not normalized_authorization or not identity or identity.get('email') == 'unknown':
+        return
+
+    if len(IDENTITY_CACHE) >= IDENTITY_CACHE_MAX_ENTRIES:
+        oldest_key = min(IDENTITY_CACHE, key=lambda key: IDENTITY_CACHE[key][0])
+        IDENTITY_CACHE.pop(oldest_key, None)
+
+    IDENTITY_CACHE[normalized_authorization] = (time.time(), dict(identity))
+
+
 def _fetch_user_identity(authorization_header):
     default_region = os.getenv('AWS_REGION', 'unknown')
-    identity = {
+    default_identity = {
         'email': 'unknown',
         'region': default_region,
     }
-
     normalized_authorization = _normalize_authorization(authorization_header)
     if not normalized_authorization:
-        return identity
+        return default_identity
+
+    cached_identity = _get_cached_identity(normalized_authorization)
+    if cached_identity:
+        return cached_identity
 
     try:
-        response = requests.get(
+        response = HTTP_SESSION.get(
             USER_INFO_ENDPOINT,
             headers={
                 'Authorization': normalized_authorization,
@@ -70,20 +146,19 @@ def _fetch_user_identity(authorization_header):
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError):
-        return identity
+        payload = _decode_jwt_payload(authorization_header)
+        return {
+            'email': 'unknown',
+            'region': (
+                payload.get('region')
+                or payload.get('custom:region')
+                or payload.get('zoneinfo')
+                or default_region
+            ),
+        }
 
-    identity['email'] = (
-        payload.get('email')
-        or payload.get('username')
-        or payload.get('cognito:username')
-        or 'unknown'
-    )
-    identity['region'] = (
-        payload.get('region')
-        or payload.get('custom:region')
-        or payload.get('zoneinfo')
-        or default_region
-    )
+    identity = _build_identity(payload, default_region)
+    _cache_identity(normalized_authorization, identity)
     return identity
 
 
@@ -404,6 +479,52 @@ def _get_search_field_matches(domains):
     return normalized_slds.intersection(search_fields)
 
 
+def _normalize_domain_list(domains):
+    normalized_domains = []
+    for domain in domains or []:
+        normalized_domain = _normalize_domain(domain)
+        if normalized_domain:
+            normalized_domains.append(normalized_domain)
+
+    return sorted(set(normalized_domains))
+
+
+def _get_cached_matched_slds(cache_key):
+    cached_entry = MATCHED_SLD_CACHE.get(cache_key)
+    if not cached_entry:
+        return None
+
+    cached_at, matched_slds = cached_entry
+    if (time.time() - cached_at) > MATCHED_SLD_CACHE_TTL_SECONDS:
+        MATCHED_SLD_CACHE.pop(cache_key, None)
+        return None
+
+    return set(matched_slds)
+
+
+def _cache_matched_slds(cache_key, matched_slds):
+    if len(MATCHED_SLD_CACHE) >= MATCHED_SLD_CACHE_MAX_ENTRIES:
+        oldest_key = min(MATCHED_SLD_CACHE, key=lambda key: MATCHED_SLD_CACHE[key][0])
+        MATCHED_SLD_CACHE.pop(oldest_key, None)
+
+    MATCHED_SLD_CACHE[cache_key] = (time.time(), sorted(set(matched_slds)))
+
+
+def _get_matched_slds(domains):
+    normalized_domains = _normalize_domain_list(domains)
+    if not normalized_domains:
+        return set()
+
+    cache_key = tuple(normalized_domains)
+    cached_match = _get_cached_matched_slds(cache_key)
+    if cached_match is not None:
+        return cached_match
+
+    matched_slds = _get_search_field_matches(normalized_domains)
+    _cache_matched_slds(cache_key, matched_slds)
+    return matched_slds
+
+
 def _get_domain_sections(domain):
     normalized_domain = _normalize_domain(domain)
     is_valid, _ = _validate_domain(normalized_domain)
@@ -440,6 +561,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
     safe_region = html.escape(identity.get('region', 'unknown'))
     domains = domains or []
     matched_slds = matched_slds or set()
+    domains_json = json.dumps(domains)
     if domains:
         domain_items = []
         for domain in domains:
@@ -451,10 +573,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 if sld in matched_slds:
                     css_class = ' class="matched-domain"'
 
+            safe_domain = html.escape(domain)
             domain_items.append(
-                '<li><a{css_class} href="#" onclick="showDomain(\'{d}\'); return false;">{d}</a></li>'.format(
-                    css_class=css_class,
-                    d=html.escape(domain)
+                '<li><a data-domain="{d}"{css_class} href="#" onclick="showDomain(\'{d}\'); return false;">{d}</a></li>'.format(
+                    d=safe_domain,
+                    css_class=css_class
                 )
             )
 
@@ -919,6 +1042,44 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return issues;
         }}
 
+        const initialDomains = {domains_json};
+
+        function applyMatchedDomainHighlights(matchedSlds) {{
+            const highlightSet = new Set((matchedSlds || []).map(value => String(value || '').toLowerCase()));
+            document.querySelectorAll('.domains a[data-domain]').forEach(link => {{
+                const domain = (link.getAttribute('data-domain') || '').toLowerCase();
+                const sld = domain.includes('.') ? domain.split('.')[0] : domain;
+                link.classList.toggle('matched-domain', highlightSet.has(sld));
+            }});
+        }}
+
+        async function loadMatchedDomains() {{
+            const authHeader = {auth_header_json};
+            if (!Array.isArray(initialDomains) || initialDomains.length === 0) {{
+                return;
+            }}
+
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader || ''
+                    }},
+                    body: JSON.stringify({{ action: 'GetMatchedSlds', domains: initialDomains }})
+                }});
+
+                if (!response.ok) {{
+                    return;
+                }}
+
+                const payload = await response.json();
+                applyMatchedDomainHighlights(payload.matchedSlds || []);
+            }} catch (_err) {{
+                // Ignore highlight refresh failures so the page stays responsive.
+            }}
+        }}
+
         async function submitHomeForm() {{
             const form = document.getElementById('home-form');
             const formData = new FormData(form);
@@ -1100,6 +1261,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         function logOff() {{
             window.location.href = '{LOGOUT_ENDPOINT}';
+        }}
+
+        if (window.requestIdleCallback) {{
+            window.requestIdleCallback(() => loadMatchedDomains());
+        }} else {{
+            window.setTimeout(loadMatchedDomains, 0);
         }}
 
         window.addEventListener('click', function(event) {{
@@ -1464,6 +1631,25 @@ def handler(event, _context):
                 }
             }
 
+        if normalized_action == 'getmatchedslds':
+            requested_domains = payload.get('domains', [])
+            if not isinstance(requested_domains, list):
+                requested_domains = []
+
+            try:
+                matched_slds = sorted(_get_matched_slds(requested_domains))
+            except Exception as exc:
+                print(f'GetMatchedSlds failed: {exc}')
+                matched_slds = []
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'matchedSlds': matched_slds}),
+                'headers': {
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
+            }
+
         identity = _fetch_user_identity(authorization_header)
         domain, success, message = _process_submission(
             payload.get('entry', ''),
@@ -1488,7 +1674,7 @@ def handler(event, _context):
         dynamodb = boto3.resource('dynamodb')
         lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
         domains = _list_lunker_domains(lunker_table, identity.get('email', 'unknown'))
-        matched_slds = _get_search_field_matches(domains)
+        matched_slds = _get_matched_slds(domains)
         response_html = _render_form(authorization_header, identity, domains, matched_slds)
 
     return {
