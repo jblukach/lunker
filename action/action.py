@@ -25,6 +25,12 @@ def handler(event, context):
                     Payload = json.dumps(payload)
                 )
 
+                lambda_client.invoke(
+                    FunctionName = os.environ['PERMUTATION_FUNCTION_NAME'],
+                    InvocationType = 'Event',
+                    Payload = json.dumps(payload)
+                )
+
     return {
         'statusCode': 200,
         'body': json.dumps('Action Completed!')

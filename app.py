@@ -4,6 +4,7 @@ import os
 import aws_cdk as cdk
 
 from lunker.lunker_database import LunkerDatabase
+from lunker.lunker_permutation import LunkerPermutation
 from lunker.lunker_stackuse1 import LunkerStackUse1
 from lunker.lunker_stackuse2 import LunkerStackUse2
 from lunker.lunker_stackusw2 import LunkerStackUsw2
@@ -12,6 +13,17 @@ app = cdk.App()
 
 LunkerDatabase(
     app, 'LunkerDatabase',
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
+
+LunkerPermutation(
+    app, 'LunkerPermutation',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-east-2'

@@ -15,26 +15,28 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 
 ## Architecture
 
-The application is deployed as four CDK stacks:
+The application is deployed as five CDK stacks:
 
 | Stack | Region | Purpose |
 | --- | --- | --- |
-| `LunkerDatabase` | `us-east-2` | Creates the global `lunker` DynamoDB table, stream processing, and the `action` Lambda |
+| `LunkerDatabase` | `us-east-2` | Creates the global `lunker` and `permutation` DynamoDB tables, org-wide resource policies, stream processing, and the `action` Lambda |
+| `LunkerPermutation` | `us-east-2` | Creates the `permutation` Lambda, scheduled daily at **11:00 UTC** |
 | `LunkerStackUse1` | `us-east-1` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-east-1` |
 | `LunkerStackUse2` | `us-east-2` | Creates the GitHub OIDC provider and IAM role used for CI/CD |
 | `LunkerStackUsw2` | `us-west-2` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-west-2` |
 
 ### Lambda functions
 
-- **`action`** — triggered by DynamoDB Streams on new domain inserts and invokes the `searchlist` Lambda in the webmonitor account
+- **`action`** — triggered by DynamoDB Streams on new domain inserts; asynchronously invokes both the `searchlist` Lambda in the webmonitor account and the local `permutation` Lambda
 - **`home`** — renders the HTML UI and handles domain listing, add/remove actions, domain section lookups, and matched-domain highlighting
+- **`permutation`** — runs daily at **11:00 UTC**; reads domains from the `lunker` table, generates permutations, and writes results to the `permutation` table with a TTL
 - **`tld`** — runs daily at **10:00 UTC** to refresh the IANA TLD list in the regional `tld` table
 
 ### DynamoDB tables
 
-- **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings and enables PITR and deletion protection
+- **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
 - **`tld`** — regional DynamoDB table used to validate top-level domains during submission
-- **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>#`; stores `sld`, `perm`, and TTL via `ttl`
+- **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
 
 ## Prerequisites
 
@@ -74,6 +76,25 @@ cdk deploy --profile lunker LunkerDatabase --require-approval never
 
 `CDK_DEFAULT_ACCOUNT` must be set, or resolvable from the active AWS CLI profile, before deployment.
 
+## Permutation strategies
+
+For each unique second-level domain (SLD) found in the `lunker` table, the `permutation` Lambda generates candidate look-alike domains using the following strategies:
+
+| Strategy | Description |
+| --- | --- |
+| **Homoglyph** | Replaces visually similar characters — e.g. `o`↔`0`, `i`↔`1`↔`l`, `s`↔`5`, `a`↔`4`, `e`↔`3`, `g`↔`9` |
+| **Omission** | Removes one character at a time from the SLD |
+| **Repetition** | Inserts a duplicate of each existing character adjacent to its original position |
+| **Transposition** | Swaps each pair of adjacent, non-identical characters |
+| **Hyphenation** | Inserts a hyphen at every possible position within the SLD |
+| **Replacement** | Substitutes each character with its QWERTY keyboard neighbors |
+| **Insertion** | Inserts a QWERTY keyboard neighbor of each character before or after it |
+| **Addition** | Prepends or appends every alphanumeric character (`a–z`, `0–9`) to the SLD |
+| **Bitsquatting** | Flips individual bits in each character's ASCII code, keeping only alphanumeric or hyphen results |
+| **Vowel Swap** | Replaces each vowel (`a e i o u`) with every other vowel |
+
+All candidates are lower-cased, must be at least two characters long, may only contain alphanumeric characters or hyphens, and must differ from the original SLD. Results are deduplicated before being written to the `permutation` table with a configurable TTL (default **30 days**).
+
 ## Home page behavior
 
 After sign-in, the home page:
@@ -93,6 +114,7 @@ requirements.txt          # Python dependencies
 cdk.json                  # CDK configuration
 lunker/
   lunker_database.py      # LunkerDatabase stack (us-east-2)
+  lunker_permutation.py   # LunkerPermutation stack (us-east-2)
   lunker_stackuse1.py     # LunkerStackUse1 stack (us-east-1)
   lunker_stackuse2.py     # LunkerStackUse2 stack (us-east-2, CI/CD)
   lunker_stackusw2.py     # LunkerStackUsw2 stack (us-west-2)
@@ -101,6 +123,8 @@ action/
 home/
   homeuse1.py             # Home API Lambda handler for us-east-1
   homeusw2.py             # Home API Lambda handler for us-west-2
+permutation/
+  permutation.py          # Domain permutation Lambda handler
 tld/
   tld.py                  # IANA TLD sync Lambda handler
 ```

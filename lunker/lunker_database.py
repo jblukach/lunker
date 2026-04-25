@@ -1,5 +1,3 @@
-from re import search
-
 from aws_cdk import (
     Duration,
     RemovalPolicy,
@@ -20,6 +18,7 @@ class LunkerDatabase(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         region = Stack.of(self).region
+        account = Stack.of(self).account
 
     ### PARAMETER ###
 
@@ -183,7 +182,8 @@ class LunkerDatabase(Stack):
             code = _lambda.Code.from_asset('action'),
             handler = 'action.handler',
             environment = dict(
-                FUNCTION_NAME = 'arn:aws:lambda:'+region+':'+webmonitor.string_value+':function:searchlist'
+                FUNCTION_NAME = 'arn:aws:lambda:'+region+':'+webmonitor.string_value+':function:searchlist',
+                PERMUTATION_FUNCTION_NAME = 'arn:aws:lambda:'+region+':'+account+':function:permutation'
             ),
             timeout = Duration.seconds(7),
             memory_size = 128,
