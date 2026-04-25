@@ -20,13 +20,13 @@ def handler(event, context):
                 lambda_client = boto3.client('lambda')
 
                 lambda_client.invoke(
-                    FunctionName = os.environ['FUNCTION_NAME'],
+                    FunctionName = os.environ['PERMUTATION_FUNCTION_NAME'],
                     InvocationType = 'Event',
                     Payload = json.dumps(payload)
                 )
-
+                
                 lambda_client.invoke(
-                    FunctionName = os.environ['PERMUTATION_FUNCTION_NAME'],
+                    FunctionName = os.environ['FUNCTION_NAME'],
                     InvocationType = 'Event',
                     Payload = json.dumps(payload)
                 )
