@@ -59,6 +59,26 @@ class LunkerDatabase(Stack):
             ]
         )
 
+        permutation = _dynamodb.TableV2(
+            self, 'permutation',
+            table_name = 'permutation',
+            partition_key = {
+                'name': 'pk',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            sort_key = {
+                'name': 'sk',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            billing = _dynamodb.Billing.on_demand(),
+            removal_policy = RemovalPolicy.DESTROY,
+            point_in_time_recovery_specification = _dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled = True
+            ),
+            deletion_protection = True,
+            time_to_live_attribute = 'ttl'
+        )
+
         table.add_global_secondary_index(
             index_name = 'pk-tk-index',
             partition_key = {
@@ -95,6 +115,33 @@ class LunkerDatabase(Stack):
                         service = 'dynamodb',
                         resource = 'table',
                         resource_name = 'lunker/index/*'
+                    )
+                ]
+            )
+        )
+
+        permutation.add_to_resource_policy(
+            _iam.PolicyStatement(
+                sid = 'AllowOrganizationGetItemAndQueryPermutation',
+                effect = _iam.Effect.ALLOW,
+                principals = [
+                    _iam.OrganizationPrincipal(organization_id = organization.string_value)
+                ],
+                actions = [
+                    'dynamodb:DescribeTable',
+                    'dynamodb:GetItem',
+                    'dynamodb:Query'
+                ],
+                resources = [
+                    self.format_arn(
+                        service = 'dynamodb',
+                        resource = 'table',
+                        resource_name = 'permutation'
+                    ),
+                    self.format_arn(
+                        service = 'dynamodb',
+                        resource = 'table',
+                        resource_name = 'permutation/index/*'
                     )
                 ]
             )

@@ -550,8 +550,7 @@ def _get_domain_sections(domain):
             'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYREMOVE'),
             'monthly': _load_section_domains(dynamodb_client, sld, 'WM_MONTHLYREMOVE'),
             'quarterly': _load_section_domains(dynamodb_client, sld, 'WM_QUARTERLYREMOVE'),
-        },
-        'allDomains': _load_section_domains(dynamodb_client, sld, 'WM_FULL'),
+        }
     }
 
 
@@ -1169,8 +1168,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                     weekly: [],
                     monthly: [],
                     quarterly: []
-                }},
-                allDomains: []
+                }}
             }};
         }}
 
@@ -1237,8 +1235,6 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 renderNumberedList(safeSections.expiredRegistrations?.monthly || []) +
                 '<h4>Quarterly</h4>' +
                 renderNumberedList(safeSections.expiredRegistrations?.quarterly || []) +
-                '<h3>All Domains</h3>' +
-                renderNumberedList(safeSections.allDomains || []) +
                 '</div>';
         }}
 

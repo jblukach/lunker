@@ -34,6 +34,7 @@ The application is deployed as four CDK stacks:
 
 - **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings and enables PITR and deletion protection
 - **`tld`** — regional DynamoDB table used to validate top-level domains during submission
+- **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>#`; stores `sld`, `perm`, and TTL via `ttl`
 
 ## Prerequisites
 
