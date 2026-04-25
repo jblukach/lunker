@@ -75,7 +75,11 @@ class LunkerDatabase(Stack):
                 point_in_time_recovery_enabled = True
             ),
             deletion_protection = True,
-            time_to_live_attribute = 'ttl'
+            time_to_live_attribute = 'ttl',
+            replicas = [
+                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
+                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
+            ]
         )
 
         table.add_global_secondary_index(

@@ -158,6 +158,7 @@ class LunkerStackUsw2(Stack):
             handler = 'homeusw2.handler',
             environment = dict(
                 LUNKER_TABLE = 'lunker',
+                PERMUTATION_TABLE = 'permutation',
                 TLD_TABLE = table.table_name,
                 CLIENTID_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:'+cognito.string_value+':secret:clientid',
                 WM_OSINT = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/osint',

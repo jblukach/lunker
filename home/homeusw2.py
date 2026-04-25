@@ -554,6 +554,44 @@ def _get_domain_sections(domain):
     }
 
 
+def _get_permutation_count(domain):
+    normalized_domain = _normalize_domain(domain)
+    is_valid, _ = _validate_domain(normalized_domain)
+    if not is_valid:
+        return 0
+
+    sld, _ = _split_domain(normalized_domain)
+    permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
+    table = boto3.resource('dynamodb').Table(permutation_table_name)
+
+    try:
+        response = table.get_item(
+            Key={
+                'pk': 'LUNKER#',
+                'sk': f'LUNKER#{sld}',
+            },
+            ProjectionExpression='#count',
+            ExpressionAttributeNames={
+                '#count': 'count',
+            },
+        )
+    except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
+        print(f'Permutation count lookup failed for {normalized_domain}: {exc}')
+        return 0
+
+    item = response.get('Item') or {}
+    count = item.get('count', 0)
+    try:
+        return int(count)
+    except (TypeError, ValueError, ArithmeticError):
+        if isinstance(count, str):
+            try:
+                return int(float(count))
+            except (TypeError, ValueError, ArithmeticError):
+                return 0
+        return 0
+
+
 def _render_form(authorization_header, identity, domains=None, matched_slds=None):
     auth_header_json = json.dumps(authorization_header)
     safe_email = html.escape(identity.get('email', 'unknown'))
@@ -755,6 +793,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         .domain-sections li {{
             margin-bottom: 6px;
+        }}
+
+        .domain-sections .attention-text {{
+            color: #ff0000;
+            font-weight: 700;
         }}
 
         .btn-primary {{
@@ -1142,12 +1185,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 .replace(/>/g, '&gt;');
         }}
 
-        function renderNumberedList(items) {{
+        function renderNumberedList(items, emphasize = false) {{
             if (!Array.isArray(items) || items.length === 0) {{
                 return '<ul><li>Empty!</li></ul>';
             }}
 
-            const rows = items.map(item => '<li>' + escapeHtml(item) + '</li>').join('');
+            const rows = items
+                .map(item => '<li>' + (emphasize ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>')
+                .join('');
             return '<ol>' + rows + '</ol>';
         }}
 
@@ -1174,7 +1219,10 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         async function fetchDomainSections(domain) {{
             const authHeader = {auth_header_json};
-            const fallback = getEmptySections();
+            const fallback = {{
+                sections: getEmptySections(),
+                permutations: 0
+            }};
 
             try {{
                 const response = await fetch('{API_ENDPOINT}', {{
@@ -1191,15 +1239,22 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 }}
 
                 const payload = await response.json();
-                return payload.sections || fallback;
+                const permutations = Number(payload.permutations);
+                return {{
+                    sections: payload.sections || fallback.sections,
+                    permutations: Number.isFinite(permutations) ? permutations : 0
+                }};
             }} catch (_err) {{
                 return fallback;
             }}
         }}
 
-        function renderDomainView(domain, sections) {{
+        function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
-            const safeSections = sections || getEmptySections();
+            const safeSections = domainDetails?.sections || getEmptySections();
+            const safePermutations = Number.isFinite(domainDetails?.permutations)
+                ? domainDetails.permutations
+                : 0;
 
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
@@ -1207,19 +1262,22 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
-                '<p><strong>Domain:</strong> ' + safeDomain + '</p>' +
+                '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
+                '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
+                '<p style="margin:4px 0 0;"><strong>Permutations:</strong> ' + String(safePermutations) + '</p>' +
+                '</div>' +
                 '<div style="text-align:center;">' +
                 '<a class="btn-primary" href="#" onclick="goHome(); return false;">Back</a>' +
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Suspect Domains</h3>' +
                 '<h4>Open Source Intelligence</h4>' +
-                renderNumberedList(safeSections.suspect?.openSourceIntelligence || []) +
+                renderNumberedList(safeSections.suspect?.openSourceIntelligence || [], true) +
                 '<h4>Domains Monitor Subscription</h4>' +
-                renderNumberedList(safeSections.suspect?.domainsMonitorSubscription || []) +
+                renderNumberedList(safeSections.suspect?.domainsMonitorSubscription || [], true) +
                 '<h3>New Domains</h3>' +
                 '<h4>Daily</h4>' +
-                renderNumberedList(safeSections.newRegistrations?.daily || []) +
+                renderNumberedList(safeSections.newRegistrations?.daily || [], true) +
                 '<h4>Weekly</h4>' +
                 renderNumberedList(safeSections.newRegistrations?.weekly || []) +
                 '<h4>Monthly</h4>' +
@@ -1228,7 +1286,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 renderNumberedList(safeSections.newRegistrations?.quarterly || []) +
                 '<h3>Expired Domains</h3>' +
                 '<h4>Daily</h4>' +
-                renderNumberedList(safeSections.expiredRegistrations?.daily || []) +
+                renderNumberedList(safeSections.expiredRegistrations?.daily || [], true) +
                 '<h4>Weekly</h4>' +
                 renderNumberedList(safeSections.expiredRegistrations?.weekly || []) +
                 '<h4>Monthly</h4>' +
@@ -1239,8 +1297,8 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         async function showDomain(domain) {{
-            const sections = await fetchDomainSections(domain);
-            renderDomainView(domain, sections);
+            const domainDetails = await fetchDomainSections(domain);
+            renderDomainView(domain, domainDetails);
         }}
 
         function toggleHelp() {{
@@ -1616,12 +1674,17 @@ def handler(event, _context):
         if normalized_action == 'getdomainsections':
             try:
                 sections = _get_domain_sections(payload.get('entry', ''))
+                permutations = _get_permutation_count(payload.get('entry', ''))
             except Exception as exc:
                 print(f'GetDomainSections failed: {exc}')
                 sections = {}
+                permutations = 0
             return {
                 'statusCode': 200,
-                'body': json.dumps({'sections': sections}),
+                'body': json.dumps({
+                    'sections': sections,
+                    'permutations': permutations,
+                }),
                 'headers': {
                     'Content-Type': 'application/json; charset=utf-8'
                 }
