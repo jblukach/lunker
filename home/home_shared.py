@@ -934,6 +934,50 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             text-decoration: underline;
         }}
 
+        .domain-sections details.section-toggle {{
+            margin: 10px 0;
+            border: 1px solid #dbe5f0;
+            border-radius: 8px;
+            background: #f8fafc;
+        }}
+
+        .domain-sections details.section-toggle > summary {{
+            cursor: pointer;
+            list-style: none;
+            padding: 10px 12px;
+            font-size: 0.95rem;
+            color: #10233c;
+            text-decoration: underline;
+            user-select: none;
+        }}
+
+        .domain-sections details.section-toggle > summary::-webkit-details-marker {{
+            display: none;
+        }}
+
+        .domain-sections details.section-toggle > summary::before {{
+            content: '\25B6';
+            display: inline-block;
+            margin-right: 8px;
+            font-size: 0.8rem;
+            transition: transform 0.15s ease;
+        }}
+
+        .domain-sections details.section-toggle[open] > summary::before {{
+            transform: rotate(90deg);
+        }}
+
+        .domain-sections details.section-toggle > ul,
+        .domain-sections details.section-toggle > ol {{
+            margin: 0 0 12px;
+            padding-left: 34px;
+            padding-right: 12px;
+        }}
+
+        .domain-sections .section-header-alert {{
+            color: #ff0000;
+        }}
+
         .domain-sections ul {{
             margin: 0;
             padding-left: 20px;
@@ -1349,6 +1393,54 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return '<ol>' + rows + '</ol>';
         }}
 
+        function normalizeDomainKey(value) {{
+            return String(value || '').trim().toLowerCase();
+        }}
+
+        function dedupeByPriority(section) {{
+            const safeSection = section || {{}};
+            const seen = new Set();
+            const filterBySeen = (items) => (Array.isArray(items) ? items : []).filter(item => {{
+                const key = normalizeDomainKey(item);
+                if (!key || seen.has(key)) {{
+                    return false;
+                }}
+                seen.add(key);
+                return true;
+            }});
+
+            return {{
+                daily: filterBySeen(safeSection.daily),
+                weekly: filterBySeen(safeSection.weekly),
+                monthly: filterBySeen(safeSection.monthly),
+                quarterly: filterBySeen(safeSection.quarterly),
+            }};
+        }}
+
+        function formatSectionHeader(label, count, alertIfPositive = false) {{
+            const safeLabel = escapeHtml(label);
+            const safeCount = escapeHtml(String(count));
+            const text = safeLabel + ' - ' + safeCount;
+
+            if (alertIfPositive && count > 0) {{
+                return '<span class="section-header-alert"><strong>' + text + '</strong></span>';
+            }}
+
+            return text;
+        }}
+
+        function renderCollapsibleList(label, items, options = {{}}) {{
+            const safeItems = Array.isArray(items) ? items : [];
+            const count = safeItems.length;
+            const emphasizeRows = Boolean(options.emphasizeRows);
+            const alertIfPositive = Boolean(options.alertIfPositive);
+
+            return '<details class="section-toggle">' +
+                '<summary>' + formatSectionHeader(label, count, alertIfPositive) + '</summary>' +
+                renderNumberedList(safeItems, emphasizeRows) +
+                '</details>';
+        }}
+
         function getEmptySections() {{
             return {{
                 suspect: {{
@@ -1432,7 +1524,19 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
             const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
-            const safeSections = domainDetails?.sections || getEmptySections();
+            const rawSections = domainDetails?.sections || getEmptySections();
+            const safeSections = {{
+                suspect: {{
+                    openSourceIntelligence: Array.isArray(rawSections.suspect?.openSourceIntelligence)
+                        ? rawSections.suspect.openSourceIntelligence
+                        : [],
+                    domainsMonitorSubscription: Array.isArray(rawSections.suspect?.domainsMonitorSubscription)
+                        ? rawSections.suspect.domainsMonitorSubscription
+                        : [],
+                }},
+                newRegistrations: dedupeByPriority(rawSections.newRegistrations),
+                expiredRegistrations: dedupeByPriority(rawSections.expiredRegistrations),
+            }};
             const safePermutations = Number.isFinite(domainDetails?.permutations)
                 ? domainDetails.permutations
                 : 0;
@@ -1457,28 +1561,18 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Suspect Domains</h3>' +
-                '<h4>Open Source Intelligence</h4>' +
-                renderNumberedList(safeSections.suspect?.openSourceIntelligence || [], true) +
-                '<h4>Domains Monitor Subscription</h4>' +
-                renderNumberedList(safeSections.suspect?.domainsMonitorSubscription || [], true) +
+                renderCollapsibleList('Open Source Intelligence', safeSections.suspect?.openSourceIntelligence || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
                 '<h3>New Domains</h3>' +
-                '<h4>Daily</h4>' +
-                renderNumberedList(safeSections.newRegistrations?.daily || [], true) +
-                '<h4>Weekly</h4>' +
-                renderNumberedList(safeSections.newRegistrations?.weekly || []) +
-                '<h4>Monthly</h4>' +
-                renderNumberedList(safeSections.newRegistrations?.monthly || []) +
-                '<h4>Quarterly</h4>' +
-                renderNumberedList(safeSections.newRegistrations?.quarterly || []) +
+                renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || []) +
+                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || []) +
+                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || []) +
                 '<h3>Expired Domains</h3>' +
-                '<h4>Daily</h4>' +
-                renderNumberedList(safeSections.expiredRegistrations?.daily || [], true) +
-                '<h4>Weekly</h4>' +
-                renderNumberedList(safeSections.expiredRegistrations?.weekly || []) +
-                '<h4>Monthly</h4>' +
-                renderNumberedList(safeSections.expiredRegistrations?.monthly || []) +
-                '<h4>Quarterly</h4>' +
-                renderNumberedList(safeSections.expiredRegistrations?.quarterly || []) +
+                renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || []) +
+                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || []) +
+                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || []) +
                 '</div>';
         }}
 
