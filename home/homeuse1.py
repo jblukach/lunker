@@ -1,6 +1,7 @@
 import base64
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 import html
 import json
@@ -19,6 +20,33 @@ IDENTITY_CACHE_MAX_ENTRIES = 256
 MATCHED_SLD_CACHE = {}
 MATCHED_SLD_CACHE_TTL_SECONDS = 60
 MATCHED_SLD_CACHE_MAX_ENTRIES = 256
+SEARCH_FIELDS_CACHE = {}
+SEARCH_FIELDS_CACHE_TTL_SECONDS = 60
+SEARCH_FIELDS_CACHE_MAX_ENTRIES = 32
+
+DYNAMODB_CONFIG = Config(
+    retries={
+        'max_attempts': 4,
+        'mode': 'adaptive',
+    },
+    max_pool_connections=50,
+    connect_timeout=2,
+    read_timeout=5,
+    tcp_keepalive=True,
+)
+DYNAMODB_RESOURCE = boto3.resource('dynamodb', config=DYNAMODB_CONFIG)
+DYNAMODB_CLIENT = boto3.client('dynamodb', config=DYNAMODB_CONFIG)
+TABLE_CACHE = {}
+
+
+def _get_table(table_name):
+    table = TABLE_CACHE.get(table_name)
+    if table is not None:
+        return table
+
+    table = DYNAMODB_RESOURCE.Table(table_name)
+    TABLE_CACHE[table_name] = table
+    return table
 
 
 def _get_method(event):
@@ -227,15 +255,16 @@ def _list_lunker_domains(table, email):
         return []
 
     domains = []
-    query_kwargs = {
-        'KeyConditionExpression': Key('pk').eq('LUNKER#') & Key('sk').begins_with(f'LUNKER#{email}#'),
+    index_query_kwargs = {
+        'IndexName': 'email-domain-index',
+        'KeyConditionExpression': Key('email').eq(email),
         'ProjectionExpression': '#domain',
         'ExpressionAttributeNames': {
             '#domain': 'domain',
         },
     }
 
-    try:
+    def _collect_from_query(query_kwargs):
         while True:
             response = table.query(**query_kwargs)
             for item in response.get('Items', []):
@@ -247,8 +276,29 @@ def _list_lunker_domains(table, email):
             if not last_evaluated_key:
                 break
             query_kwargs['ExclusiveStartKey'] = last_evaluated_key
-    except (BotoCoreError, ClientError, KeyError, TypeError):
+
+    fallback_query_kwargs = {
+        'KeyConditionExpression': Key('pk').eq('LUNKER#') & Key('sk').begins_with(f'LUNKER#{email}#'),
+        'ProjectionExpression': '#domain',
+        'ExpressionAttributeNames': {
+            '#domain': 'domain',
+        },
+    }
+
+    try:
+        _collect_from_query(index_query_kwargs)
+    except ClientError as exc:
+        error_code = exc.response.get('Error', {}).get('Code', '')
+        if error_code not in ('ValidationException', 'ResourceNotFoundException'):
+            return []
+    except (BotoCoreError, KeyError, TypeError):
         return []
+
+    if not domains:
+        try:
+            _collect_from_query(fallback_query_kwargs)
+        except (BotoCoreError, ClientError, KeyError, TypeError):
+            return []
 
     return sorted(set(domains))
 
@@ -262,9 +312,8 @@ def _process_submission(raw_domain, email, action):
     if not email or email == 'unknown':
         return normalized_domain, False, 'Unable to resolve user email from token.'
 
-    dynamodb = boto3.resource('dynamodb')
-    tld_table = dynamodb.Table(os.environ['TLD_TABLE'])
-    lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
+    tld_table = _get_table(os.environ['TLD_TABLE'])
+    lunker_table = _get_table(os.environ['LUNKER_TABLE'])
 
     _, top_level_domain = _split_domain(normalized_domain)
     if not _tld_exists(tld_table, top_level_domain):
@@ -339,6 +388,14 @@ def _query_with_prefix(dynamodb_client, table_identifier, sld, sk_prefix):
         'TableName': table_identifier,
         'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
         'ExpressionAttributeValues': expression_values,
+        'ProjectionExpression': '#sk, #domain, #fqdn, #host, #name',
+        'ExpressionAttributeNames': {
+            '#sk': 'sk',
+            '#domain': 'domain',
+            '#fqdn': 'fqdn',
+            '#host': 'host',
+            '#name': 'name',
+        },
     }
 
     while True:
@@ -466,13 +523,12 @@ def _get_search_field_matches(domains):
     if not normalized_slds:
         return set()
 
-    dynamodb_client = boto3.client('dynamodb')
     search_fields = set()
 
     for env_key in ('WM_DAILYUPDATE', 'WM_DAILYREMOVE', 'WM_MALWARE', 'WM_OSINT'):
         for table_identifier in _resolve_table_identifiers(env_key):
             try:
-                search_fields.update(_query_search_fields(dynamodb_client, table_identifier))
+                search_fields.update(_get_cached_search_fields(DYNAMODB_CLIENT, table_identifier))
             except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
                 print(f'Search-field query failed on table {table_identifier}: {exc}')
 
@@ -510,6 +566,37 @@ def _cache_matched_slds(cache_key, matched_slds):
     MATCHED_SLD_CACHE[cache_key] = (time.time(), sorted(set(matched_slds)))
 
 
+def _get_cached_search_fields_entry(table_identifier):
+    cached_entry = SEARCH_FIELDS_CACHE.get(table_identifier)
+    if not cached_entry:
+        return None
+
+    cached_at, search_fields = cached_entry
+    if (time.time() - cached_at) > SEARCH_FIELDS_CACHE_TTL_SECONDS:
+        SEARCH_FIELDS_CACHE.pop(table_identifier, None)
+        return None
+
+    return set(search_fields)
+
+
+def _cache_search_fields(table_identifier, search_fields):
+    if len(SEARCH_FIELDS_CACHE) >= SEARCH_FIELDS_CACHE_MAX_ENTRIES:
+        oldest_key = min(SEARCH_FIELDS_CACHE, key=lambda key: SEARCH_FIELDS_CACHE[key][0])
+        SEARCH_FIELDS_CACHE.pop(oldest_key, None)
+
+    SEARCH_FIELDS_CACHE[table_identifier] = (time.time(), sorted(set(search_fields)))
+
+
+def _get_cached_search_fields(dynamodb_client, table_identifier):
+    cached_search_fields = _get_cached_search_fields_entry(table_identifier)
+    if cached_search_fields is not None:
+        return cached_search_fields
+
+    search_fields = set(_query_search_fields(dynamodb_client, table_identifier))
+    _cache_search_fields(table_identifier, search_fields)
+    return search_fields
+
+
 def _get_matched_slds(domains):
     normalized_domains = _normalize_domain_list(domains)
     if not normalized_domains:
@@ -532,7 +619,7 @@ def _get_domain_sections(domain):
         return {}
 
     sld, _ = _split_domain(normalized_domain)
-    dynamodb_client = boto3.client('dynamodb')
+    dynamodb_client = DYNAMODB_CLIENT
 
     return {
         'suspect': {
@@ -562,7 +649,7 @@ def _get_permutation_count(domain):
 
     sld, _ = _split_domain(normalized_domain)
     permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
-    table = boto3.resource('dynamodb').Table(permutation_table_name)
+    table = _get_table(permutation_table_name)
 
     try:
         response = table.get_item(
@@ -600,7 +687,7 @@ def _get_domain_permutations(domain):
 
     sld, _ = _split_domain(normalized_domain)
     permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
-    table = boto3.resource('dynamodb').Table(permutation_table_name)
+    table = _get_table(permutation_table_name)
 
     try:
         response = table.get_item(
@@ -1856,8 +1943,7 @@ def handler(event, _context):
         response_html = _render_result(action, domain, message, success, authorization_header, operation)
     else:
         identity = _fetch_user_identity(authorization_header)
-        dynamodb = boto3.resource('dynamodb')
-        lunker_table = dynamodb.Table(os.environ['LUNKER_TABLE'])
+        lunker_table = _get_table(os.environ['LUNKER_TABLE'])
         domains = _list_lunker_domains(lunker_table, identity.get('email', 'unknown'))
         matched_slds = _get_matched_slds(domains)
         response_html = _render_form(authorization_header, identity, domains, matched_slds)

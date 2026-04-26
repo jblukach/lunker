@@ -94,6 +94,18 @@ class LunkerDatabase(Stack):
             }
         )
 
+        table.add_global_secondary_index(
+            index_name = 'email-domain-index',
+            partition_key = {
+                'name': 'email',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            sort_key = {
+                'name': 'domain',
+                'type': _dynamodb.AttributeType.STRING
+            }
+        )
+
     ### RESOURCE POLICY ###
 
         table.add_to_resource_policy(
