@@ -956,15 +956,19 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         .domain-sections details.section-toggle > summary::before {{
-            content: '\25B6';
+            content: '+';
             display: inline-block;
+            width: 16px;
             margin-right: 8px;
-            font-size: 0.8rem;
-            transition: transform 0.15s ease;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1;
+            text-align: center;
+            color: #0e7490;
         }}
 
         .domain-sections details.section-toggle[open] > summary::before {{
-            transform: rotate(90deg);
+            content: '-';
         }}
 
         .domain-sections details.section-toggle > ul,
