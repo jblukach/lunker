@@ -1403,14 +1403,18 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return extractSld(item) === matchSld;
         }}
 
-        function renderNumberedList(items, emphasize = false, matchSld = '') {{
+        function renderNumberedList(items, emphasize = false, matchSld = '', containsMatch = false) {{
             if (!Array.isArray(items) || items.length === 0) {{
                 return '<ul><li>Empty!</li></ul>';
             }}
 
             const rows = items
                 .map(item => {{
-                    const highlightItem = emphasize && hasExactSldMatch(item, matchSld);
+                    const highlightItem = emphasize && (
+                        containsMatch
+                            ? (!!matchSld && String(item).toLowerCase().includes(matchSld.toLowerCase()))
+                            : hasExactSldMatch(item, matchSld)
+                    );
                     return '<li>' + (highlightItem ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>';
                 }})
                 .join('');
@@ -1605,6 +1609,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         function renderPermutationsView(domain, permutations) {{
             const safeDomain = escapeHtml(domain);
             const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
+            const selectedSld = extractSld(domain);
 
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
@@ -1621,7 +1626,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Permutations</h3>' +
-                renderNumberedList(permutations || []) +
+                renderNumberedList(permutations || [], true, selectedSld, true) +
                 '</div>';
         }}
 
