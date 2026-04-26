@@ -592,6 +592,41 @@ def _get_permutation_count(domain):
         return 0
 
 
+def _get_domain_permutations(domain):
+    normalized_domain = _normalize_domain(domain)
+    is_valid, _ = _validate_domain(normalized_domain)
+    if not is_valid:
+        return []
+
+    sld, _ = _split_domain(normalized_domain)
+    permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
+    table = boto3.resource('dynamodb').Table(permutation_table_name)
+
+    try:
+        response = table.get_item(
+            Key={
+                'pk': 'LUNKER#',
+                'sk': f'LUNKER#{sld}',
+            },
+            ProjectionExpression='perm',
+        )
+    except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
+        print(f'Permutation lookup failed for {normalized_domain}: {exc}')
+        return []
+
+    item = response.get('Item') or {}
+    permutations = item.get('perm', [])
+    if not isinstance(permutations, list):
+        return []
+
+    normalized_permutations = []
+    for permutation in permutations:
+        if permutation is None:
+            continue
+        normalized_permutations.append(str(permutation))
+    return normalized_permutations
+
+
 def _render_form(authorization_header, identity, domains=None, matched_slds=None):
     auth_header_json = json.dumps(authorization_header)
     safe_email = html.escape(identity.get('email', 'unknown'))
@@ -748,6 +783,15 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         .domains a:hover {{
+            text-decoration: underline;
+        }}
+
+        .inline-link {{
+            color: #0e7490;
+            text-decoration: none;
+        }}
+
+        .inline-link:hover {{
             text-decoration: underline;
         }}
 
@@ -1249,12 +1293,45 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
         }}
 
+        async function fetchDomainPermutations(domain) {{
+            const authHeader = {auth_header_json};
+
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader || ''
+                    }},
+                    body: JSON.stringify({{ action: 'GetDomainPermutations', entry: domain }})
+                }});
+
+                if (!response.ok) {{
+                    return [];
+                }}
+
+                const payload = await response.json();
+                return Array.isArray(payload.permutations) ? payload.permutations : [];
+            }} catch (_err) {{
+                return [];
+            }}
+        }}
+
+        const domainDetailsCache = new Map();
+        const domainPermutationsCache = new Map();
+
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
+            const domainLiteral = JSON.stringify(String(domain || ''));
             const safeSections = domainDetails?.sections || getEmptySections();
             const safePermutations = Number.isFinite(domainDetails?.permutations)
                 ? domainDetails.permutations
                 : 0;
+
+            domainDetailsCache.set(domain, {{
+                sections: safeSections,
+                permutations: safePermutations
+            }});
 
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
@@ -1264,7 +1341,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
                 '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
                 '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
-                '<p style="margin:4px 0 0;"><strong>Permutations:</strong> ' + String(safePermutations) + '</p>' +
+                '<p style="margin:4px 0 0;"><strong>Permutations:</strong> <a class="inline-link" href="#" onclick="showPermutations(' + domainLiteral + '); return false;">' + String(safePermutations) + '</a></p>' +
                 '</div>' +
                 '<div style="text-align:center;">' +
                 '<a class="btn-primary" href="#" onclick="goHome(); return false;">Back</a>' +
@@ -1296,9 +1373,42 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>';
         }}
 
+        function renderPermutationsView(domain, permutations) {{
+            const safeDomain = escapeHtml(domain);
+            const domainLiteral = JSON.stringify(String(domain || ''));
+
+            document.querySelector('main').innerHTML =
+                '<div class="card-actions">' +
+                '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
+                '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
+                '</div>' +
+                '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
+                '<div style="text-align:center; margin: 0 0 12px;">' +
+                '<a class="btn-primary" href="#" onclick="showDomain(' + domainLiteral + '); return false;">Back</a>' +
+                '</div>' +
+                '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
+                '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
+                '<p style="margin:4px 0 0;"><strong>Permutations:</strong> ' + String(Array.isArray(permutations) ? permutations.length : 0) + '</p>' +
+                '</div>' +
+                '<div class="domain-sections">' +
+                '<h3>Permutations</h3>' +
+                renderNumberedList(permutations || []) +
+                '</div>';
+        }}
+
         async function showDomain(domain) {{
-            const domainDetails = await fetchDomainSections(domain);
+            const domainDetails = domainDetailsCache.get(domain) || await fetchDomainSections(domain);
             renderDomainView(domain, domainDetails);
+        }}
+
+        async function showPermutations(domain) {{
+            let permutations = domainPermutationsCache.get(domain);
+            if (!permutations) {{
+                permutations = await fetchDomainPermutations(domain);
+                domainPermutationsCache.set(domain, permutations);
+            }}
+
+            renderPermutationsView(domain, permutations);
         }}
 
         function toggleHelp() {{
@@ -1683,6 +1793,22 @@ def handler(event, _context):
                 'statusCode': 200,
                 'body': json.dumps({
                     'sections': sections,
+                    'permutations': permutations,
+                }),
+                'headers': {
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
+            }
+
+        if normalized_action == 'getdomainpermutations':
+            try:
+                permutations = _get_domain_permutations(payload.get('entry', ''))
+            except Exception as exc:
+                print(f'GetDomainPermutations failed: {exc}')
+                permutations = []
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
                     'permutations': permutations,
                 }),
                 'headers': {
