@@ -1386,13 +1386,33 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 .replace(/>/g, '&gt;');
         }}
 
-        function renderNumberedList(items, emphasize = false) {{
+        function extractSld(value) {{
+            const normalized = normalizeDomainKey(value);
+            if (!normalized) {{
+                return '';
+            }}
+
+            return normalized.includes('.') ? normalized.split('.', 1)[0] : normalized;
+        }}
+
+        function hasExactSldMatch(item, matchSld) {{
+            if (!matchSld) {{
+                return false;
+            }}
+
+            return extractSld(item) === matchSld;
+        }}
+
+        function renderNumberedList(items, emphasize = false, matchSld = '') {{
             if (!Array.isArray(items) || items.length === 0) {{
                 return '<ul><li>Empty!</li></ul>';
             }}
 
             const rows = items
-                .map(item => '<li>' + (emphasize ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>')
+                .map(item => {{
+                    const highlightItem = emphasize && hasExactSldMatch(item, matchSld);
+                    return '<li>' + (highlightItem ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>';
+                }})
                 .join('');
             return '<ol>' + rows + '</ol>';
         }}
@@ -1438,10 +1458,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const count = safeItems.length;
             const emphasizeRows = Boolean(options.emphasizeRows);
             const alertIfPositive = Boolean(options.alertIfPositive);
+            const matchSld = extractSld(options.matchSld);
 
             return '<details class="section-toggle">' +
                 '<summary>' + formatSectionHeader(label, count, alertIfPositive) + '</summary>' +
-                renderNumberedList(safeItems, emphasizeRows) +
+                renderNumberedList(safeItems, emphasizeRows, matchSld) +
                 '</details>';
         }}
 
@@ -1528,6 +1549,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
             const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
+            const selectedSld = extractSld(domain);
             const rawSections = domainDetails?.sections || getEmptySections();
             const safeSections = {{
                 suspect: {{
@@ -1565,15 +1587,15 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Suspect Domains</h3>' +
-                renderCollapsibleList('Open Source Intelligence', safeSections.suspect?.openSourceIntelligence || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
-                renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Open Source Intelligence', safeSections.suspect?.openSourceIntelligence || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
                 '<h3>New Domains</h3>' +
-                renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
                 renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || []) +
                 renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || []) +
                 renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || []) +
                 '<h3>Expired Domains</h3>' +
-                renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true }}) +
+                renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
                 renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || []) +
                 renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || []) +
                 renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || []) +
