@@ -150,6 +150,7 @@ def _vowel_swap_permutations(sld):
 
 
 def _recommended_permutations(sld):
+    sld = sld.lower()
     candidates = set()
     candidates.update(_homoglyph_permutations(sld))
     candidates.update(_omission_permutations(sld))
@@ -162,10 +163,17 @@ def _recommended_permutations(sld):
     candidates.update(_bitsquatting_permutations(sld))
     candidates.update(_vowel_swap_permutations(sld))
 
-    normalized = {
-        c.lower() for c in candidates
-        if c and c != sld and len(c) >= 2 and all(ch.isalnum() or ch == '-' for ch in c)
-    }
+    normalized = set()
+    for candidate in candidates:
+        if not candidate or len(candidate) < 2:
+            continue
+
+        lowered = candidate.lower()
+        if sld in lowered:
+            continue
+
+        if all(ch.isalnum() or ch == '-' for ch in lowered):
+            normalized.add(lowered)
 
     return sorted(normalized)
 
