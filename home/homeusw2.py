@@ -1473,12 +1473,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
-                '<div style="text-align:center; margin: 0 0 12px;">' +
-                '<a class="btn-primary" href="#" onclick="showDomain(' + domainLiteral + '); return false;">Back</a>' +
-                '</div>' +
                 '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
                 '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
                 '<p style="margin:4px 0 0;"><strong>Permutations:</strong> ' + String(Array.isArray(permutations) ? permutations.length : 0) + '</p>' +
+                '</div>' +
+                '<div style="text-align:center; margin: 0 0 12px;">' +
+                '<a class="btn-primary" href="#" onclick="showDomain(' + domainLiteral + '); return false;">Back</a>' +
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Permutations</h3>' +
