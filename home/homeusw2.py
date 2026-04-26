@@ -695,7 +695,10 @@ def _get_domain_permutations(domain):
                 'pk': 'LUNKER#',
                 'sk': f'LUNKER#{sld}',
             },
-            ProjectionExpression='perm',
+            ProjectionExpression='#perm',
+            ExpressionAttributeNames={
+                '#perm': 'perm',
+            },
         )
     except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
         print(f'Permutation lookup failed for {normalized_domain}: {exc}')
@@ -1409,7 +1412,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
-            const domainLiteral = JSON.stringify(String(domain || ''));
+            const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
             const safeSections = domainDetails?.sections || getEmptySections();
             const safePermutations = Number.isFinite(domainDetails?.permutations)
                 ? domainDetails.permutations
@@ -1462,7 +1465,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         function renderPermutationsView(domain, permutations) {{
             const safeDomain = escapeHtml(domain);
-            const domainLiteral = JSON.stringify(String(domain || ''));
+            const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
 
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
