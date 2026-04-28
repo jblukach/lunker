@@ -34,7 +34,7 @@ The application is deployed as five CDK stacks:
 
 ### DynamoDB tables
 
-- **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
+- **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda and an `email-domain-index` GSI used by the home workflow; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
 - **`tld`** — regional DynamoDB table used to validate top-level domains during submission
 - **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
 
@@ -75,6 +75,25 @@ cdk deploy --profile lunker LunkerDatabase --require-approval never
 ```
 
 `CDK_DEFAULT_ACCOUNT` must be set, or resolvable from the active AWS CLI profile, before deployment.
+
+## Local testing
+
+Unit tests currently focus on shared home-handler behavior.
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+## Runtime configuration
+
+The stacks set most Lambda environment variables automatically at deploy time. The values below are useful when troubleshooting behavior.
+
+| Function | Key environment variables |
+| --- | --- |
+| `action` | `FUNCTION_NAME`, `PERMUTATION_FUNCTION_NAME` |
+| `home` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `TLD_TABLE`, `CLIENTID_SECRET_ARN`, `WM_OSINT`, `WM_MALWARE`, `WM_DAILYUPDATE`, `WM_WEEKLYUPDATE`, `WM_MONTHLYUPDATE`, `WM_QUARTERLYUPDATE`, `WM_DAILYREMOVE`, `WM_WEEKLYREMOVE`, `WM_MONTHLYREMOVE`, `WM_QUARTERLYREMOVE` |
+| `permutation` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `LUNKER_INDEX` (defaults to `pk-tk-index`), `PERMUTATION_TTL_DAYS` (defaults to `30`) |
+| `tld` | `TLD_TABLE` |
 
 ## Permutation strategies
 
@@ -121,10 +140,13 @@ lunker/
 action/
   action.py               # DynamoDB Streams Lambda handler
 home/
+  home_shared.py          # Shared home API logic and HTML rendering helpers
   homeuse1.py             # Home API Lambda handler for us-east-1
   homeusw2.py             # Home API Lambda handler for us-west-2
 permutation/
   permutation.py          # Domain permutation Lambda handler
+tests/
+  test_home_shared.py     # Unit tests for shared home logic
 tld/
   tld.py                  # IANA TLD sync Lambda handler
 ```

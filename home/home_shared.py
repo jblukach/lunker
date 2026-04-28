@@ -466,6 +466,33 @@ def _load_section_domains(dynamodb_client, sld, *env_keys):
     return []
 
 
+def _partition_suspect_domains(osint_domains, malware_domains):
+    def _normalize_and_dedupe(domains):
+        normalized = []
+        seen = set()
+
+        for domain in domains or []:
+            normalized_domain = _normalize_domain(domain)
+            is_valid, _ = _validate_domain(normalized_domain)
+            if not is_valid or normalized_domain in seen:
+                continue
+
+            seen.add(normalized_domain)
+            normalized.append(normalized_domain)
+
+        return normalized
+
+    normalized_osint = _normalize_and_dedupe(osint_domains)
+    normalized_malware = _normalize_and_dedupe(malware_domains)
+    malware_set = set(normalized_malware)
+    filtered_osint = [domain for domain in normalized_osint if domain not in malware_set]
+
+    return {
+        'openSourceIntelligence': filtered_osint,
+        'domainsMonitorSubscription': normalized_malware,
+    }
+
+
 def _normalize_search_field(value):
     normalized_value = _normalize_domain(value)
     if not normalized_value:
@@ -639,12 +666,13 @@ def _get_domain_sections(domain):
 
     sld, _ = _split_domain(normalized_domain)
     dynamodb_client = DYNAMODB_CLIENT
+    suspect_domains = {
+        'openSourceIntelligence': _load_section_domains(dynamodb_client, sld, 'WM_OSINT'),
+        'domainsMonitorSubscription': _load_section_domains(dynamodb_client, sld, 'WM_MALWARE'),
+    }
 
     return {
-        'suspect': {
-            'openSourceIntelligence': _load_section_domains(dynamodb_client, sld, 'WM_OSINT'),
-            'domainsMonitorSubscription': _load_section_domains(dynamodb_client, sld, 'WM_MALWARE'),
-        },
+        'suspect': suspect_domains,
         'newRegistrations': {
             'daily': _load_section_domains(dynamodb_client, sld, 'WM_DAILYUPDATE'),
             'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYUPDATE'),
@@ -1462,11 +1490,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const count = safeItems.length;
             const emphasizeRows = Boolean(options.emphasizeRows);
             const alertIfPositive = Boolean(options.alertIfPositive);
+            const containsMatch = Boolean(options.containsMatch);
             const matchSld = extractSld(options.matchSld);
 
             return '<details class="section-toggle">' +
                 '<summary>' + formatSectionHeader(label, count, alertIfPositive) + '</summary>' +
-                renderNumberedList(safeItems, emphasizeRows, matchSld) +
+                renderNumberedList(safeItems, emphasizeRows, matchSld, containsMatch) +
                 '</details>';
         }}
 
@@ -1595,14 +1624,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
                 '<h3>New Domains</h3>' +
                 renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || []) +
-                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || []) +
-                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || []) +
+                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
                 '<h3>Expired Domains</h3>' +
                 renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || []) +
-                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || []) +
-                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || []) +
+                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
                 '</div>';
         }}
 
