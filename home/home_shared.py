@@ -1423,26 +1423,22 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return normalized.includes('.') ? normalized.split('.', 1)[0] : normalized;
         }}
 
-        function hasExactSldMatch(item, matchSld) {{
+        function containsSldMatch(item, matchSld) {{
             if (!matchSld) {{
                 return false;
             }}
 
-            return extractSld(item) === matchSld;
+            return normalizeDomainKey(item).includes(matchSld.toLowerCase());
         }}
 
-        function renderNumberedList(items, emphasize = false, matchSld = '', containsMatch = false) {{
+        function renderNumberedList(items, emphasize = false, matchSld = '') {{
             if (!Array.isArray(items) || items.length === 0) {{
                 return '<ul><li>Empty!</li></ul>';
             }}
 
             const rows = items
                 .map(item => {{
-                    const highlightItem = emphasize && (
-                        containsMatch
-                            ? (!!matchSld && String(item).toLowerCase().includes(matchSld.toLowerCase()))
-                            : hasExactSldMatch(item, matchSld)
-                    );
+                    const highlightItem = emphasize && containsSldMatch(item, matchSld);
                     return '<li>' + (highlightItem ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>';
                 }})
                 .join('');
@@ -1490,12 +1486,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const count = safeItems.length;
             const emphasizeRows = Boolean(options.emphasizeRows);
             const alertIfPositive = Boolean(options.alertIfPositive);
-            const containsMatch = Boolean(options.containsMatch);
             const matchSld = extractSld(options.matchSld);
 
             return '<details class="section-toggle">' +
                 '<summary>' + formatSectionHeader(label, count, alertIfPositive) + '</summary>' +
-                renderNumberedList(safeItems, emphasizeRows, matchSld, containsMatch) +
+                renderNumberedList(safeItems, emphasizeRows, matchSld) +
                 '</details>';
         }}
 
@@ -1624,14 +1619,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
                 '<h3>New Domains</h3>' +
                 renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
                 '<h3>Expired Domains</h3>' +
                 renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || [], {{ emphasizeRows: true, containsMatch: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
                 '</div>';
         }}
 
@@ -1655,7 +1650,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Permutations</h3>' +
-                renderNumberedList(permutations || [], true, selectedSld, true) +
+                renderNumberedList(permutations || [], true, selectedSld) +
                 '</div>';
         }}
 
