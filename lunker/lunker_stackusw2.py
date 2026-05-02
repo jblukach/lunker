@@ -53,27 +53,6 @@ class LunkerStackUsw2(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
-    ### DATABASE ###
-
-        table = _dynamodb.Table(
-            self, 'table',
-            table_name = 'tld',
-            partition_key = {
-                'name': 'pk',
-                'type': _dynamodb.AttributeType.STRING
-            },
-            sort_key = {
-                'name': 'sk',
-                'type': _dynamodb.AttributeType.STRING
-            },
-            billing_mode = _dynamodb.BillingMode.PAY_PER_REQUEST,
-            removal_policy = RemovalPolicy.DESTROY,
-                        point_in_time_recovery_specification = _dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled = True
-            ),
-            deletion_protection = True
-        )
-
     ### PARAMETER ###
 
         apigateway = _ssm.StringParameter.from_string_parameter_attributes(
@@ -159,7 +138,7 @@ class LunkerStackUsw2(Stack):
             environment = dict(
                 LUNKER_TABLE = 'lunker',
                 PERMUTATION_TABLE = 'permutation',
-                TLD_TABLE = table.table_name,
+                TLD_TABLE = 'tld',
                 CLIENTID_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:'+cognito.string_value+':secret:clientid',
                 WM_OSINT = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/osint',
                 WM_MALWARE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/malware',
@@ -187,46 +166,4 @@ class LunkerStackUsw2(Stack):
             log_group_name = '/aws/lambda/'+home.function_name,
             retention = _logs.RetentionDays.THIRTEEN_MONTHS,
             removal_policy = RemovalPolicy.DESTROY
-        )
-
-    ### TLD LAMBDA FUNCTION ###
-
-        tld = _lambda.Function(
-            self, 'tld',
-            function_name = 'tld',
-            runtime = _lambda.Runtime.PYTHON_3_13,
-            architecture = _lambda.Architecture.ARM_64,
-            code = _lambda.Code.from_asset('tld'),
-            timeout = Duration.seconds(900),
-            handler = 'tld.handler',
-            environment = dict(
-                TLD_TABLE = table.table_name
-            ),
-            memory_size = 256,
-            role = role,
-            layers = [
-                requests
-            ]
-        )
-
-        logs = _logs.LogGroup(
-            self, 'logs',
-            log_group_name = '/aws/lambda/'+tld.function_name,
-            retention = _logs.RetentionDays.ONE_DAY,
-            removal_policy = RemovalPolicy.DESTROY
-        )
-
-        event = _events.Rule(
-            self, 'event',
-            schedule = _events.Schedule.cron(
-                minute = '0',
-                hour = '10',
-                month = '*',
-                week_day = '*',
-                year = '*'
-            )
-        )
-
-        event.add_target(
-            _targets.LambdaFunction(tld)
         )

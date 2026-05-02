@@ -7,7 +7,7 @@ from boto3.dynamodb.conditions import Key
 def handler(event, context):
 
     headers = {'User-Agent': 'Lunker - https://github.com/jblukach/lunker'}
-    response = requests.get('https://data.iana.org/TLD/tlds-alpha-by-domain.txt', headers=headers)
+    response = requests.get('https://data.iana.org/TLD/tlds-alpha-by-domain.txt', headers=headers, timeout=10)
     data = response.text
 
     tlds = []
@@ -32,7 +32,7 @@ def handler(event, context):
             KeyConditionExpression = Key('pk').eq('TLD#'),
             ExclusiveStartKey = response['LastEvaluatedKey']
         )
-        responsedata.update(response['Items'])
+        responsedata.extend(response['Items'])
 
     print('DynamoDB: '+str(len(responsedata)))
 

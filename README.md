@@ -6,7 +6,7 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 
 - **Amazon Cognito authentication** for the hosted sign-in flow
 - **Domain management** — add or remove second-level domains such as `example.com`
-- **TLD validation** using the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), refreshed daily
+- **TLD validation** using the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), stored in the centralized `tld` table
 - **Threat intelligence enrichment** triggered automatically when a domain is registered
 - **Saved-domain insights** — clicking a saved domain loads related sections such as suspect domains, new registrations, expired registrations, and all known domains
 - **Matched-domain highlighting** — domains with matching search-field hits are emphasized in red on the home page
@@ -19,23 +19,23 @@ The application is deployed as five CDK stacks:
 
 | Stack | Region | Purpose |
 | --- | --- | --- |
-| `LunkerDatabase` | `us-east-2` | Creates the global `lunker` and `permutation` DynamoDB tables, org-wide resource policies, stream processing, and the `action` Lambda |
+| `LunkerDatabase` | `us-east-2` | Creates the global `lunker`, `permutation`, and `tld` DynamoDB tables (with replicas), org-wide resource policies, stream processing, and the `action` and `tld` Lambdas |
 | `LunkerPermutation` | `us-east-2` | Creates the `permutation` Lambda, scheduled daily at **11:00 UTC** |
-| `LunkerStackUse1` | `us-east-1` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-east-1` |
+| `LunkerStackUse1` | `us-east-1` | Creates the regional `home` Lambda and related IAM/logging resources for `us-east-1` |
 | `LunkerStackUse2` | `us-east-2` | Creates the GitHub OIDC provider and IAM role used for CI/CD |
-| `LunkerStackUsw2` | `us-west-2` | Creates the regional `tld` table plus the `home` and `tld` Lambdas for `us-west-2` |
+| `LunkerStackUsw2` | `us-west-2` | Creates the regional `home` Lambda and related IAM/logging resources for `us-west-2` |
 
 ### Lambda functions
 
 - **`action`** — triggered by DynamoDB Streams on new domain inserts; asynchronously invokes both the `searchlist` Lambda in the webmonitor account and the local `permutation` Lambda
 - **`home`** — renders the HTML UI and handles domain listing, add/remove actions, domain section lookups, and matched-domain highlighting
 - **`permutation`** — runs daily at **11:00 UTC**; reads domains from the `lunker` table, generates permutations, and writes results to the `permutation` table with a TTL
-- **`tld`** — runs daily at **10:00 UTC** to refresh the IANA TLD list in the regional `tld` table
+- **`tld`** — deployed in `LunkerDatabase` (us-east-2), runs daily at **10:00 UTC**, and writes to the centralized `tld` table
 
 ### DynamoDB tables
 
 - **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda and an `email-domain-index` GSI used by the home workflow; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
-- **`tld`** — regional DynamoDB table used to validate top-level domains during submission
+- **`tld`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; used by home and tld workflows for top-level-domain validation data; enables PITR and deletion protection; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
 - **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
 
 ## Prerequisites
@@ -55,6 +55,7 @@ The application is deployed as five CDK stacks:
   - `/account/webmonitor` — AWS account ID that owns the webmonitor service
 - S3 buckets containing the `requests.zip` Lambda layer:
   - `packages-use1-lukach-io` in `us-east-1`
+  - `packages-use2-lukach-io` in `us-east-2`
   - `packages-usw2-lukach-io` in `us-west-2`
 
 ## Deployment
@@ -134,9 +135,9 @@ cdk.json                  # CDK configuration
 lunker/
   lunker_database.py      # LunkerDatabase stack (us-east-2)
   lunker_permutation.py   # LunkerPermutation stack (us-east-2)
-  lunker_stackuse1.py     # LunkerStackUse1 stack (us-east-1)
+  lunker_stackuse1.py     # LunkerStackUse1 stack (us-east-1, home)
   lunker_stackuse2.py     # LunkerStackUse2 stack (us-east-2, CI/CD)
-  lunker_stackusw2.py     # LunkerStackUsw2 stack (us-west-2)
+  lunker_stackusw2.py     # LunkerStackUsw2 stack (us-west-2, home)
 action/
   action.py               # DynamoDB Streams Lambda handler
 home/
