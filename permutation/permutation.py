@@ -1,5 +1,4 @@
 # pyright: reportMissingImports=false
-# pylint: disable=import-error
 
 import os
 import time
@@ -149,24 +148,51 @@ def _vowel_swap_permutations(sld):
     return out
 
 
-def _recommended_permutations(sld):
-    sld = sld.lower()
-    candidates = set()
+def _strategy_candidates(sld):
     if len(sld) < 5:
         # Keep short-SLD output conservative to limit false positives.
-        candidates.update(_homoglyph_permutations(sld))
-        candidates.update(_transposition_permutations(sld))
-    else:
-        candidates.update(_homoglyph_permutations(sld))
-        candidates.update(_omission_permutations(sld))
-        candidates.update(_repetition_permutations(sld))
-        candidates.update(_transposition_permutations(sld))
-        candidates.update(_hyphenation_permutations(sld))
-        candidates.update(_replacement_permutations(sld))
-        candidates.update(_insertion_permutations(sld))
-        candidates.update(_addition_permutations(sld))
-        candidates.update(_bitsquatting_permutations(sld))
-        candidates.update(_vowel_swap_permutations(sld))
+        return [
+            ('homoglyph', _homoglyph_permutations(sld)),
+            ('transposition', _transposition_permutations(sld))
+        ]
+
+    if len(sld) == 5:
+        # Use a medium profile for length-5 SLDs to balance coverage and noise.
+        return [
+            ('homoglyph', _homoglyph_permutations(sld)),
+            ('transposition', _transposition_permutations(sld)),
+            ('replacement', _replacement_permutations(sld))
+        ]
+
+    return [
+        ('homoglyph', _homoglyph_permutations(sld)),
+        ('omission', _omission_permutations(sld)),
+        ('repetition', _repetition_permutations(sld)),
+        ('transposition', _transposition_permutations(sld)),
+        ('hyphenation', _hyphenation_permutations(sld)),
+        ('replacement', _replacement_permutations(sld)),
+        ('insertion', _insertion_permutations(sld)),
+        ('addition', _addition_permutations(sld)),
+        ('bitsquatting', _bitsquatting_permutations(sld)),
+        ('vowel_swap', _vowel_swap_permutations(sld))
+    ]
+
+
+def _log_permutation_stats(sld, strategy_sets, pre_filter_count, post_filter_count):
+    strategy_counts = ', '.join(f'{name}:{len(values)}' for name, values in strategy_sets)
+    print(
+        f'PERMUTATION_STATS sld={sld} len={len(sld)} '
+        f'strategy_counts={{{strategy_counts}}} '
+        f'pre_filter={pre_filter_count} post_filter={post_filter_count}'
+    )
+
+
+def _recommended_permutations(sld):
+    sld = sld.lower()
+    strategy_sets = _strategy_candidates(sld)
+    candidates = set()
+    for _, values in strategy_sets:
+        candidates.update(values)
 
     normalized = set()
     for candidate in candidates:
@@ -179,6 +205,8 @@ def _recommended_permutations(sld):
 
         if all(ch.isalnum() or ch == '-' for ch in lowered):
             normalized.add(lowered)
+
+    _log_permutation_stats(sld, strategy_sets, len(candidates), len(normalized))
 
     return sorted(normalized)
 

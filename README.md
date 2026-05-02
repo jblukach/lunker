@@ -144,7 +144,8 @@ The stacks set most Lambda environment variables automatically at deploy time. T
 For each unique second-level domain (SLD) found in the `lunker` table, the `permutation` Lambda generates candidate look-alike domains.
 
 - For SLDs shorter than 5 characters, it applies a conservative subset: **Homoglyph** and **Transposition**.
-- For SLDs with length 5 or greater, it applies the full strategy set below.
+- For SLDs with length exactly 5, it applies a medium subset: **Homoglyph**, **Transposition**, and **Replacement**.
+- For SLDs longer than 5, it applies the full strategy set below.
 
 | Strategy | Description |
 | --- | --- |
@@ -160,6 +161,8 @@ For each unique second-level domain (SLD) found in the `lunker` table, the `perm
 | **Vowel Swap** | Replaces each vowel (`a e i o u`) with every other vowel |
 
 All candidates are lower-cased, must be at least two characters long, may only contain alphanumeric characters or hyphens, and must not contain the original SLD as a substring. Results are deduplicated before being written to the `permutation` table with a configurable TTL (default **30 days**).
+
+The Lambda also emits one `PERMUTATION_STATS` log entry per processed SLD, including per-strategy raw counts plus pre-filter and post-filter totals. This is useful for tuning strategy thresholds and tracking false-positive volume over time.
 
 ## Home page behavior
 
