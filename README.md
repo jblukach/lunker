@@ -8,8 +8,8 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 - **Domain management** — add or remove second-level domains such as `example.com`
 - **TLD validation** using the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), stored in the centralized `tld` table
 - **Threat intelligence enrichment** triggered automatically when a domain is registered
-- **Saved-domain insights** — clicking a saved domain loads related sections such as suspect domains, new registrations, expired registrations, and all known domains
-- **Matched-domain highlighting** — domains with matching search-field hits are emphasized in red on the home page
+- **Saved-domain insights** — clicking a saved domain loads related suspect, new-registration, and expired-registration sections
+- **Matched-domain highlighting** — exact SLD matches are emphasized in red and permutation-based matches in orange
 - **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
 - **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
 
@@ -36,7 +36,7 @@ The application is deployed as five CDK stacks:
 
 - **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda and an `email-domain-index` GSI used by the home workflow; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
 - **`tld`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; used by home and tld workflows for top-level-domain validation data; enables PITR and deletion protection; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
-- **`permutation`** — DynamoDB table in `us-east-2` with key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
+- **`permutation`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
 
 ## Prerequisites
 
@@ -68,6 +68,12 @@ source .venv/bin/activate
 # Install Python dependencies
 pip install -r requirements.txt
 
+# Synthesize templates
+cdk synth
+
+# Review infrastructure changes
+cdk diff --profile lunker
+
 # Deploy all stacks
 cdk deploy --profile lunker --all --require-approval never
 
@@ -76,6 +82,43 @@ cdk deploy --profile lunker LunkerDatabase --require-approval never
 ```
 
 `CDK_DEFAULT_ACCOUNT` must be set, or resolvable from the active AWS CLI profile, before deployment.
+
+## Post-deploy verification
+
+Use these commands to validate that the core scheduled and event-driven workflows are healthy.
+
+```bash
+# Confirm all stacks are up to date
+cdk diff --profile lunker
+
+# Trigger a one-off TLD sync
+aws lambda invoke \
+  --profile lunker \
+  --region us-east-2 \
+  --function-name tld \
+  --payload '{}' \
+  /tmp/lunker-tld.json && cat /tmp/lunker-tld.json
+
+# Trigger a one-off full permutation refresh
+aws lambda invoke \
+  --profile lunker \
+  --region us-east-2 \
+  --function-name permutation \
+  --payload '{}' \
+  /tmp/lunker-permutation-full.json && cat /tmp/lunker-permutation-full.json
+
+# Trigger a targeted permutation run for one SLD
+aws lambda invoke \
+  --profile lunker \
+  --region us-east-2 \
+  --function-name permutation \
+  --payload '{"sld":"example"}' \
+  /tmp/lunker-permutation-single.json && cat /tmp/lunker-permutation-single.json
+
+# Tail action/permutation logs while testing inserts
+aws logs tail /aws/lambda/action --profile lunker --region us-east-2 --follow
+aws logs tail /aws/lambda/permutation --profile lunker --region us-east-2 --follow
+```
 
 ## Local testing
 
@@ -92,13 +135,16 @@ The stacks set most Lambda environment variables automatically at deploy time. T
 | Function | Key environment variables |
 | --- | --- |
 | `action` | `FUNCTION_NAME`, `PERMUTATION_FUNCTION_NAME` |
-| `home` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `TLD_TABLE`, `CLIENTID_SECRET_ARN`, `WM_OSINT`, `WM_MALWARE`, `WM_DAILYUPDATE`, `WM_WEEKLYUPDATE`, `WM_MONTHLYUPDATE`, `WM_QUARTERLYUPDATE`, `WM_DAILYREMOVE`, `WM_WEEKLYREMOVE`, `WM_MONTHLYREMOVE`, `WM_QUARTERLYREMOVE` |
+| `home` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `TLD_TABLE`, `CLIENTID_SECRET_ARN`, `WM_OSINT`, `WM_MALWARE`, `WM_DAILYUPDATE`, `WM_WEEKLYUPDATE`, `WM_MONTHLYUPDATE`, `WM_DAILYREMOVE`, `WM_WEEKLYREMOVE`, `WM_MONTHLYREMOVE` |
 | `permutation` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `LUNKER_INDEX` (defaults to `pk-tk-index`), `PERMUTATION_TTL_DAYS` (defaults to `30`) |
 | `tld` | `TLD_TABLE` |
 
 ## Permutation strategies
 
-For each unique second-level domain (SLD) found in the `lunker` table, the `permutation` Lambda generates candidate look-alike domains using the following strategies:
+For each unique second-level domain (SLD) found in the `lunker` table, the `permutation` Lambda generates candidate look-alike domains.
+
+- For SLDs shorter than 5 characters, it applies a conservative subset: **Homoglyph** and **Transposition**.
+- For SLDs with length 5 or greater, it applies the full strategy set below.
 
 | Strategy | Description |
 | --- | --- |
@@ -113,14 +159,14 @@ For each unique second-level domain (SLD) found in the `lunker` table, the `perm
 | **Bitsquatting** | Flips individual bits in each character's ASCII code, keeping only alphanumeric or hyphen results |
 | **Vowel Swap** | Replaces each vowel (`a e i o u`) with every other vowel |
 
-All candidates are lower-cased, must be at least two characters long, may only contain alphanumeric characters or hyphens, and must differ from the original SLD. Results are deduplicated before being written to the `permutation` table with a configurable TTL (default **30 days**).
+All candidates are lower-cased, must be at least two characters long, may only contain alphanumeric characters or hyphens, and must not contain the original SLD as a substring. Results are deduplicated before being written to the `permutation` table with a configurable TTL (default **30 days**).
 
 ## Home page behavior
 
 After sign-in, the home page:
 
 1. lists the domains saved for the current user
-2. highlights matched domains in **red** when related search-field data is present
+2. highlights exact SLD matches in **red** and permutation-based matches in **orange**
 3. lets the user add or remove a domain
 4. loads detailed domain sections on demand when a saved domain is clicked
 

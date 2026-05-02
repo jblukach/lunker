@@ -152,16 +152,21 @@ def _vowel_swap_permutations(sld):
 def _recommended_permutations(sld):
     sld = sld.lower()
     candidates = set()
-    candidates.update(_homoglyph_permutations(sld))
-    candidates.update(_omission_permutations(sld))
-    candidates.update(_repetition_permutations(sld))
-    candidates.update(_transposition_permutations(sld))
-    candidates.update(_hyphenation_permutations(sld))
-    candidates.update(_replacement_permutations(sld))
-    candidates.update(_insertion_permutations(sld))
-    candidates.update(_addition_permutations(sld))
-    candidates.update(_bitsquatting_permutations(sld))
-    candidates.update(_vowel_swap_permutations(sld))
+    if len(sld) < 5:
+        # Keep short-SLD output conservative to limit false positives.
+        candidates.update(_homoglyph_permutations(sld))
+        candidates.update(_transposition_permutations(sld))
+    else:
+        candidates.update(_homoglyph_permutations(sld))
+        candidates.update(_omission_permutations(sld))
+        candidates.update(_repetition_permutations(sld))
+        candidates.update(_transposition_permutations(sld))
+        candidates.update(_hyphenation_permutations(sld))
+        candidates.update(_replacement_permutations(sld))
+        candidates.update(_insertion_permutations(sld))
+        candidates.update(_addition_permutations(sld))
+        candidates.update(_bitsquatting_permutations(sld))
+        candidates.update(_vowel_swap_permutations(sld))
 
     normalized = set()
     for candidate in candidates:

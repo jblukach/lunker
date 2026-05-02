@@ -677,13 +677,11 @@ def _get_domain_sections(domain):
             'daily': _load_section_domains(dynamodb_client, sld, 'WM_DAILYUPDATE'),
             'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYUPDATE'),
             'monthly': _load_section_domains(dynamodb_client, sld, 'WM_MONTHLY', 'WM_MONTHLYUPDATE'),
-            'quarterly': _load_section_domains(dynamodb_client, sld, 'WM_QUARTERLYUPDATE'),
         },
         'expiredRegistrations': {
             'daily': _load_section_domains(dynamodb_client, sld, 'WM_DAILYREMOVE'),
             'weekly': _load_section_domains(dynamodb_client, sld, 'WM_WEEKLYREMOVE'),
             'monthly': _load_section_domains(dynamodb_client, sld, 'WM_MONTHLYREMOVE'),
-            'quarterly': _load_section_domains(dynamodb_client, sld, 'WM_QUARTERLYREMOVE'),
         }
     }
 
@@ -915,8 +913,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         .domains a.matched-domain {{
-            color: #ff0000;
-            font-weight: 700;
+            font-weight: 800;
         }}
 
         .domains a:hover {{
@@ -1010,6 +1007,10 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             color: #ff0000;
         }}
 
+        .domain-sections .section-header-warning {{
+            color: #ff8c00;
+        }}
+
         .domain-sections ul {{
             margin: 0;
             padding-left: 20px;
@@ -1024,9 +1025,16 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             margin-bottom: 6px;
         }}
 
+        .domains .attention-text,
         .domain-sections .attention-text {{
+            color: #ff8c00;
+            font-weight: 800;
+        }}
+
+        .domains .exact-sld-text,
+        .domain-sections .exact-sld-text {{
             color: #ff0000;
-            font-weight: 700;
+            font-weight: 800;
         }}
 
         .btn-primary {{
@@ -1315,40 +1323,9 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         const initialDomains = {domains_json};
 
-        function applyMatchedDomainHighlights(matchedSlds) {{
-            const highlightSet = new Set((matchedSlds || []).map(value => String(value || '').toLowerCase()));
-            document.querySelectorAll('.domains a[data-domain]').forEach(link => {{
-                const domain = (link.getAttribute('data-domain') || '').toLowerCase();
-                const sld = domain.includes('.') ? domain.split('.')[0] : domain;
-                link.classList.toggle('matched-domain', highlightSet.has(sld));
-            }});
-        }}
-
         async function loadMatchedDomains() {{
-            const authHeader = {auth_header_json};
-            if (!Array.isArray(initialDomains) || initialDomains.length === 0) {{
-                return;
-            }}
-
-            try {{
-                const response = await fetch('{API_ENDPOINT}', {{
-                    method: 'POST',
-                    headers: {{
-                        'Content-Type': 'application/json',
-                        'Authorization': authHeader || ''
-                    }},
-                    body: JSON.stringify({{ action: 'GetMatchedSlds', domains: initialDomains }})
-                }});
-
-                if (!response.ok) {{
-                    return;
-                }}
-
-                const payload = await response.json();
-                applyMatchedDomainHighlights(payload.matchedSlds || []);
-            }} catch (_err) {{
-                // Ignore highlight refresh failures so the page stays responsive.
-            }}
+            // Main-list highlighting is now rendered server-side to avoid extra network latency.
+            return;
         }}
 
         async function submitHomeForm() {{
@@ -1424,22 +1401,110 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         function containsSldMatch(item, matchSld) {{
-            if (!matchSld) {{
+            const normalizedMatch = normalizeDomainKey(matchSld);
+            if (!normalizedMatch) {{
                 return false;
             }}
 
-            return normalizeDomainKey(item).includes(matchSld.toLowerCase());
+            return extractSld(item) === normalizedMatch;
         }}
 
-        function renderNumberedList(items, emphasize = false, matchSld = '') {{
+        function containsPermutationMatch(item, permutationTerms) {{
+            const normalizedItem = normalizeDomainKey(item);
+            if (!normalizedItem) {{
+                return false;
+            }}
+
+            return (Array.isArray(permutationTerms) ? permutationTerms : []).some(term => {{
+                const normalizedTerm = normalizeDomainKey(term);
+                return normalizedTerm && normalizedItem.includes(normalizedTerm);
+            }});
+        }}
+
+        function markSubstringMatches(styleMap, normalizedText, term, styleCode) {{
+            const normalizedTerm = normalizeDomainKey(term);
+            if (!normalizedTerm) {{
+                return;
+            }}
+
+            let startIndex = 0;
+            while (startIndex < normalizedText.length) {{
+                const matchIndex = normalizedText.indexOf(normalizedTerm, startIndex);
+                if (matchIndex === -1) {{
+                    break;
+                }}
+
+                const endIndex = matchIndex + normalizedTerm.length;
+                for (let idx = matchIndex; idx < endIndex; idx += 1) {{
+                    styleMap[idx] = Math.max(styleMap[idx], styleCode);
+                }}
+
+                startIndex = endIndex;
+            }}
+        }}
+
+        function highlightDomainSubstrings(item, exactTerms, permutationTerms) {{
+            const rawText = String(item || '');
+            const normalizedText = rawText.toLowerCase();
+            if (!rawText) {{
+                return '';
+            }}
+
+            const styleMap = new Array(rawText.length).fill(0);
+            const safePermutationTerms = Array.isArray(permutationTerms) ? permutationTerms : [];
+
+            safePermutationTerms
+                .map(term => normalizeDomainKey(term))
+                .filter(term => term)
+                .sort((a, b) => b.length - a.length)
+                .forEach(term => markSubstringMatches(styleMap, normalizedText, term, 1));
+
+            const safeExactTerms = (Array.isArray(exactTerms) ? exactTerms : [exactTerms])
+                .map(term => normalizeDomainKey(term))
+                .filter(term => term)
+                .sort((a, b) => b.length - a.length);
+            safeExactTerms.forEach(term => markSubstringMatches(styleMap, normalizedText, term, 2));
+
+            if (!styleMap.some(value => value > 0)) {{
+                return escapeHtml(rawText);
+            }}
+
+            let output = '';
+            let segmentStart = 0;
+            while (segmentStart < rawText.length) {{
+                const styleCode = styleMap[segmentStart];
+                let segmentEnd = segmentStart + 1;
+                while (segmentEnd < rawText.length && styleMap[segmentEnd] === styleCode) {{
+                    segmentEnd += 1;
+                }}
+
+                const segmentText = escapeHtml(rawText.slice(segmentStart, segmentEnd));
+                if (styleCode === 2) {{
+                    output += '<span class="exact-sld-text">' + segmentText + '</span>';
+                }} else if (styleCode === 1) {{
+                    output += '<span class="attention-text">' + segmentText + '</span>';
+                }} else {{
+                    output += segmentText;
+                }}
+
+                segmentStart = segmentEnd;
+            }}
+
+            return output;
+        }}
+
+        function renderNumberedList(items, emphasize = false, matchSld = '', permutationTerms = []) {{
             if (!Array.isArray(items) || items.length === 0) {{
                 return '<ul><li>Empty!</li></ul>';
             }}
 
             const rows = items
                 .map(item => {{
-                    const highlightItem = emphasize && containsSldMatch(item, matchSld);
-                    return '<li>' + (highlightItem ? '<span class="attention-text">' + escapeHtml(item) + '</span>' : escapeHtml(item)) + '</li>';
+                    const hasExactMatch = containsSldMatch(item, matchSld);
+                    const hasPermutationMatch = containsPermutationMatch(item, permutationTerms);
+                    const highlightItem = emphasize && (hasExactMatch || hasPermutationMatch);
+                    const rowExactTerms = hasExactMatch ? [matchSld] : [];
+                    return '<li>' + (highlightItem ? highlightDomainSubstrings(item, rowExactTerms, permutationTerms) : escapeHtml(item)) + '</li>';
                 }})
                 .join('');
             return '<ol>' + rows + '</ol>';
@@ -1465,7 +1530,6 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 daily: filterBySeen(safeSection.daily),
                 weekly: filterBySeen(safeSection.weekly),
                 monthly: filterBySeen(safeSection.monthly),
-                quarterly: filterBySeen(safeSection.quarterly),
             }};
         }}
 
@@ -1481,16 +1545,39 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return text;
         }}
 
+        function getHeaderHighlightLevel(items, matchSld, permutationTerms) {{
+            const safeItems = Array.isArray(items) ? items : [];
+            const hasExactSldMatch = safeItems.some(item => containsSldMatch(item, matchSld));
+            if (hasExactSldMatch) {{
+                return 'alert';
+            }}
+
+            const hasPermutationMatch = safeItems.some(item => containsPermutationMatch(item, permutationTerms));
+            if (hasPermutationMatch) {{
+                return 'warning';
+            }}
+
+            return 'none';
+        }}
+
         function renderCollapsibleList(label, items, options = {{}}) {{
             const safeItems = Array.isArray(items) ? items : [];
             const count = safeItems.length;
             const emphasizeRows = Boolean(options.emphasizeRows);
             const alertIfPositive = Boolean(options.alertIfPositive);
             const matchSld = extractSld(options.matchSld);
+            const permutationTerms = Array.isArray(options.permutationTerms) ? options.permutationTerms : [];
+            const headerHighlightLevel = getHeaderHighlightLevel(safeItems, matchSld, permutationTerms);
+            const shouldAlertHeader = alertIfPositive && count > 0 && headerHighlightLevel === 'alert';
+            const shouldWarnHeader = alertIfPositive && count > 0 && headerHighlightLevel === 'warning';
+            const baseHeader = formatSectionHeader(label, count, shouldAlertHeader);
+            const styledHeader = shouldWarnHeader
+                ? '<span class="section-header-warning"><strong>' + baseHeader + '</strong></span>'
+                : baseHeader;
 
             return '<details class="section-toggle">' +
-                '<summary>' + formatSectionHeader(label, count, alertIfPositive) + '</summary>' +
-                renderNumberedList(safeItems, emphasizeRows, matchSld) +
+                '<summary>' + styledHeader + '</summary>' +
+                renderNumberedList(safeItems, emphasizeRows, matchSld, permutationTerms) +
                 '</details>';
         }}
 
@@ -1503,14 +1590,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 newRegistrations: {{
                     daily: [],
                     weekly: [],
-                    monthly: [],
-                    quarterly: []
+                    monthly: []
                 }},
                 expiredRegistrations: {{
                     daily: [],
                     weekly: [],
-                    monthly: [],
-                    quarterly: []
+                    monthly: []
                 }}
             }};
         }}
@@ -1578,6 +1663,9 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const safeDomain = escapeHtml(domain);
             const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
             const selectedSld = extractSld(domain);
+            const permutationTerms = Array.isArray(domainDetails?.permutationTerms)
+                ? domainDetails.permutationTerms
+                : [];
             const rawSections = domainDetails?.sections || getEmptySections();
             const safeSections = {{
                 suspect: {{
@@ -1615,19 +1703,27 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Suspect Domains</h3>' +
-                renderCollapsibleList('Open Source Intelligence', safeSections.suspect?.openSourceIntelligence || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Open Source Intelligence', safeSections.suspect?.openSourceIntelligence || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
+                renderCollapsibleList('Domains Monitor Subscription', safeSections.suspect?.domainsMonitorSubscription || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
                 '<h3>New Domains</h3>' +
-                renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Quarterly', safeSections.newRegistrations?.quarterly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Daily', safeSections.newRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
+                renderCollapsibleList('Weekly', safeSections.newRegistrations?.weekly || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
+                renderCollapsibleList('Monthly', safeSections.newRegistrations?.monthly || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
                 '<h3>Expired Domains</h3>' +
-                renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
-                renderCollapsibleList('Quarterly', safeSections.expiredRegistrations?.quarterly || [], {{ emphasizeRows: true, matchSld: selectedSld }}) +
+                renderCollapsibleList('Daily', safeSections.expiredRegistrations?.daily || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
+                renderCollapsibleList('Weekly', safeSections.expiredRegistrations?.weekly || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
+                renderCollapsibleList('Monthly', safeSections.expiredRegistrations?.monthly || [], {{ emphasizeRows: true, alertIfPositive: true, matchSld: selectedSld, permutationTerms }}) +
                 '</div>';
+        }}
+
+        async function getDomainPermutationTerms(domain) {{
+            let permutations = domainPermutationsCache.get(domain);
+            if (!permutations) {{
+                permutations = await fetchDomainPermutations(domain);
+                domainPermutationsCache.set(domain, permutations);
+            }}
+
+            return Array.isArray(permutations) ? permutations : [];
         }}
 
         function renderPermutationsView(domain, permutations) {{
@@ -1655,8 +1751,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         async function showDomain(domain) {{
-            const domainDetails = domainDetailsCache.get(domain) || await fetchDomainSections(domain);
-            renderDomainView(domain, domainDetails);
+            const [domainDetails, permutationTerms] = await Promise.all([
+                domainDetailsCache.get(domain) || fetchDomainSections(domain),
+                getDomainPermutationTerms(domain),
+            ]);
+            renderDomainView(domain, {{
+                ...domainDetails,
+                permutationTerms,
+            }});
         }}
 
         async function showPermutations(domain) {{
@@ -1683,12 +1785,6 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
 
         function logOff() {{
             window.location.href = '{LOGOUT_ENDPOINT}';
-        }}
-
-        if (window.requestIdleCallback) {{
-            window.requestIdleCallback(() => loadMatchedDomains());
-        }} else {{
-            window.setTimeout(loadMatchedDomains, 0);
         }}
 
         window.addEventListener('click', function(event) {{

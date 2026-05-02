@@ -145,11 +145,9 @@ class LunkerStackUsw2(Stack):
                 WM_DAILYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/dailyupdate',
                 WM_WEEKLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/weeklyupdate',
                 WM_MONTHLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/monthlyupdate',
-                WM_QUARTERLYUPDATE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/quarterlyupdate',
                 WM_DAILYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/dailyremove',
                 WM_WEEKLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/weeklyremove',
-                WM_MONTHLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/monthlyremove',
-                WM_QUARTERLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/quarterlyremove'
+                WM_MONTHLYREMOVE = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/monthlyremove'
             ),
             timeout = Duration.seconds(30),
             memory_size = 256,
