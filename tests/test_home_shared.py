@@ -525,6 +525,23 @@ class RenderFormTests(unittest.TestCase):
         self.assertIn('Gone Fishing!', html)
         self.assertIn('Empty!', html)
 
+    def test_render_form_uses_contains_for_sld_matches(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('function containsSldMatch(item, matchSld)', html)
+        self.assertIn('return normalizedItem.includes(normalizedMatch);', html)
+
+    def test_render_form_header_highlight_checks_sld_before_permutations(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('const hasExactSldMatch = safeItems.some(item => containsSldMatch(item, matchSld));', html)
+        self.assertIn('if (hasExactSldMatch) {', html)
+        self.assertIn("return 'alert';", html)
+        self.assertIn('const hasPermutationMatch = safeItems.some(item => containsPermutationMatch(item, permutationTerms));', html)
+        self.assertIn("return 'warning';", html)
+        self.assertTrue(
+            html.index('const hasExactSldMatch = safeItems.some(item => containsSldMatch(item, matchSld));') <
+            html.index('const hasPermutationMatch = safeItems.some(item => containsPermutationMatch(item, permutationTerms));')
+        )
+
 
 class RenderResultTests(unittest.TestCase):
     def test_render_result_success_submission(self):
@@ -686,6 +703,36 @@ class GetMethodTests(unittest.TestCase):
         self.assertEqual(method, 'GET')
 
 
+class GetAuthorizationTests(unittest.TestCase):
+    def test_get_authorization_prefers_event_level_value(self):
+        event = {
+            'authorization': 'event-token',
+            'headers': {
+                'Authorization': 'header-token'
+            }
+        }
+        self.assertEqual(home_shared._get_authorization(event), 'event-token')
+
+    def test_get_authorization_falls_back_to_authorization_header(self):
+        event = {
+            'headers': {
+                'Authorization': 'header-token'
+            }
+        }
+        self.assertEqual(home_shared._get_authorization(event), 'header-token')
+
+    def test_get_authorization_supports_lowercase_header(self):
+        event = {
+            'headers': {
+                'authorization': 'header-token'
+            }
+        }
+        self.assertEqual(home_shared._get_authorization(event), 'header-token')
+
+    def test_get_authorization_returns_empty_without_values(self):
+        self.assertEqual(home_shared._get_authorization({}), '')
+
+
 class GetBodyTests(unittest.TestCase):
     def test_get_body_plain_text(self):
         event = {'body': 'plain text'}
@@ -701,6 +748,11 @@ class GetBodyTests(unittest.TestCase):
 
     def test_get_body_none_body(self):
         event = {}
+        body = home_shared._get_body(event)
+        self.assertEqual(body, '')
+
+    def test_get_body_base64_encoded_malformed_payload(self):
+        event = {'body': '!!!not-base64!!!', 'isBase64Encoded': True}
         body = home_shared._get_body(event)
         self.assertEqual(body, '')
 

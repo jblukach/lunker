@@ -9,7 +9,7 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 - **TLD validation** using the official [IANA TLD list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt), stored in the centralized `tld` table
 - **Threat intelligence enrichment** triggered automatically when a domain is registered
 - **Saved-domain insights** — clicking a saved domain loads related suspect, new-registration, and expired-registration sections
-- **Matched-domain highlighting** — exact SLD matches are emphasized in red and permutation-based matches in orange
+- **Matched-domain highlighting** — exact SLD containment matches are emphasized in red and permutation-based matches in orange; red takes precedence when both conditions apply
 - **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
 - **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
 
@@ -125,7 +125,13 @@ aws logs tail /aws/lambda/permutation --profile lunker --region us-east-2 --foll
 Unit tests currently focus on shared home-handler behavior.
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py" -v
+pytest -q
+```
+
+If you are using a virtual environment, run tests with the environment interpreter:
+
+```bash
+.venv/bin/python -m pytest -q
 ```
 
 ## Runtime configuration

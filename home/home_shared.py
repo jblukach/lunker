@@ -1,4 +1,5 @@
 import base64
+import binascii
 import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.config import Config
@@ -58,7 +59,10 @@ def _get_method(event):
 def _get_body(event):
     body = event.get('body') or ''
     if event.get('isBase64Encoded') and body:
-        body = base64.b64decode(body).decode('utf-8')
+        try:
+            body = base64.b64decode(body, validate=True).decode('utf-8')
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            return ''
     return body
 
 
@@ -1406,7 +1410,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 return false;
             }}
 
-            return extractSld(item) === normalizedMatch;
+            const normalizedItem = normalizeDomainKey(item);
+            if (!normalizedItem) {{
+                return false;
+            }}
+
+            return normalizedItem.includes(normalizedMatch);
         }}
 
         function containsPermutationMatch(item, permutationTerms) {{
