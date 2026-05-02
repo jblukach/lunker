@@ -10,6 +10,7 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 - **Threat intelligence enrichment** triggered automatically when a domain is registered
 - **Saved-domain insights** — clicking a saved domain loads related suspect, new-registration, and expired-registration sections
 - **Matched-domain highlighting** — exact SLD containment matches are emphasized in red and permutation-based matches in orange; red takes precedence when both conditions apply
+- **In-session data refresh** — a refresh control updates home, domain-detail, and permutation views without requiring a full browser reload
 - **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
 - **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
 
@@ -178,6 +179,13 @@ After sign-in, the home page:
 2. highlights exact SLD matches in **red** and permutation-based matches in **orange**
 3. lets the user add or remove a domain
 4. loads detailed domain sections on demand when a saved domain is clicked
+5. supports in-page refresh via the top-right **R** control (next to help/logout) so data can be reloaded without logging in again
+
+Refresh behavior is view-aware:
+
+- On the home view, refresh reloads the latest domain list.
+- On a domain-details view, refresh clears cached section/permutation data and re-queries the backend.
+- On the permutations view, refresh re-fetches the current domain's permutation list.
 
 To keep the page responsive, the home handlers reuse HTTP connections and cache short-lived identity and highlight lookups during warm Lambda invocations.
 

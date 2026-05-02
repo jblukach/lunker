@@ -87,6 +87,28 @@ class WebUiHandlerTests(unittest.TestCase):
         self.assertEqual(payload['sections'], {})
         self.assertEqual(payload['permutations'], 0)
 
+    def test_post_get_domain_sections_action_is_case_and_whitespace_insensitive(self):
+        event = {
+            'requestContext': {
+                'http': {
+                    'method': 'POST'
+                }
+            },
+            'body': json.dumps({'action': '  gEtDoMaInSeCtIoNs  ', 'entry': 'example.com'}),
+        }
+
+        expected_sections = {'suspect': {'openSourceIntelligence': [], 'domainsMonitorSubscription': []}}
+
+        with patch.object(home_shared, '_get_domain_sections', return_value=expected_sections) as get_sections, \
+                patch.object(home_shared, '_get_permutation_count', return_value=3) as get_count:
+            response = home_shared._handle_request(event, None)
+
+        payload = json.loads(response['body'])
+        self.assertEqual(payload['sections'], expected_sections)
+        self.assertEqual(payload['permutations'], 3)
+        get_sections.assert_called_once_with('example.com')
+        get_count.assert_called_once_with('example.com')
+
     def test_post_get_domain_permutations_success(self):
         event = {
             'requestContext': {
@@ -529,6 +551,32 @@ class RenderFormTests(unittest.TestCase):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
         self.assertIn('function containsSldMatch(item, matchSld)', html)
         self.assertIn('return normalizedItem.includes(normalizedMatch);', html)
+
+    def test_render_form_includes_refresh_button(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>', html)
+
+    def test_render_form_toolbar_button_order_help_refresh_logoff(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        help_index = html.index('<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>')
+        refresh_index = html.index('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>')
+        logoff_index = html.index('<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>')
+        self.assertTrue(help_index < refresh_index < logoff_index)
+
+    def test_render_form_includes_refresh_current_view_logic(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('async function refreshCurrentView() {', html)
+        self.assertIn("if (activeView.name === 'domain' && activeView.domain) {", html)
+        self.assertIn('domainDetailsCache.delete(activeView.domain);', html)
+        self.assertIn('domainPermutationsCache.delete(activeView.domain);', html)
+        self.assertIn('await showDomain(activeView.domain);', html)
+        self.assertIn("if (activeView.name === 'permutations' && activeView.domain) {", html)
+        self.assertIn('await showPermutations(activeView.domain);', html)
+        self.assertIn('goHome();', html)
+
+    def test_render_form_dynamic_views_include_refresh_button(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertEqual(html.count('<button class="refresh-button"'), 3)
 
     def test_render_form_header_highlight_checks_sld_before_permutations(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})

@@ -1100,6 +1100,23 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             background: #f8fafc;
         }}
 
+        .refresh-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .refresh-button:hover {{
+            background: #f8fafc;
+        }}
+
         .help-modal-overlay {{
             position: fixed;
             inset: 0;
@@ -1263,6 +1280,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
     <main>
         <div class="card-actions">
             <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
+            <button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>
             <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
         </div>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
@@ -1326,6 +1344,10 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         const initialDomains = {domains_json};
+        let activeView = {{
+            name: 'home',
+            domain: ''
+        }};
 
         async function loadMatchedDomains() {{
             // Main-list highlighting is now rendered server-side to avoid extra network latency.
@@ -1386,6 +1408,23 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             .then(r => r.text())
             .then(h => {{ document.open(); document.write(h); document.close(); }})
             .catch(() => {{ window.location.href = '{API_ENDPOINT}'; }});
+        }}
+
+        async function refreshCurrentView() {{
+            if (activeView.name === 'domain' && activeView.domain) {{
+                domainDetailsCache.delete(activeView.domain);
+                domainPermutationsCache.delete(activeView.domain);
+                await showDomain(activeView.domain);
+                return;
+            }}
+
+            if (activeView.name === 'permutations' && activeView.domain) {{
+                domainPermutationsCache.delete(activeView.domain);
+                await showPermutations(activeView.domain);
+                return;
+            }}
+
+            goHome();
         }}
 
         function escapeHtml(value) {{
@@ -1700,6 +1739,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
                 '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
+                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>' +
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
@@ -1743,6 +1783,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
                 '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
+                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>' +
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
@@ -1764,6 +1805,10 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 domainDetailsCache.get(domain) || fetchDomainSections(domain),
                 getDomainPermutationTerms(domain),
             ]);
+            activeView = {{
+                name: 'domain',
+                domain,
+            }};
             renderDomainView(domain, {{
                 ...domainDetails,
                 permutationTerms,
@@ -1776,6 +1821,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 permutations = await fetchDomainPermutations(domain);
                 domainPermutationsCache.set(domain, permutations);
             }}
+
+            activeView = {{
+                name: 'permutations',
+                domain,
+            }};
 
             renderPermutationsView(domain, permutations);
         }}
