@@ -1280,7 +1280,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
     <main>
         <div class="card-actions">
             <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
-            <button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>
+            <button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>
             <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
         </div>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
@@ -1348,6 +1348,40 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             name: 'home',
             domain: ''
         }};
+        let refreshInFlight = false;
+        let domainSectionsAbortController = null;
+        let domainPermutationsAbortController = null;
+
+        function setRefreshButtonsDisabled(disabled) {{
+            document.querySelectorAll('.refresh-button').forEach((button) => {{
+                button.disabled = Boolean(disabled);
+                button.style.opacity = disabled ? '0.6' : '1';
+                button.style.cursor = disabled ? 'not-allowed' : 'pointer';
+            }});
+        }}
+
+        function showRefreshError(message) {{
+            const existing = document.getElementById('refresh-error-banner');
+            if (existing) {{
+                existing.remove();
+            }}
+
+            const banner = document.createElement('div');
+            banner.id = 'refresh-error-banner';
+            banner.style.margin = '12px 0 0';
+            banner.style.padding = '10px 12px';
+            banner.style.border = '1px solid #f5c2c7';
+            banner.style.borderRadius = '10px';
+            banner.style.background = '#fff5f5';
+            banner.style.color = '#b42318';
+            banner.style.fontSize = '0.92rem';
+            banner.textContent = message || 'Refresh failed. Please try again.';
+
+            const main = document.querySelector('main');
+            if (main) {{
+                main.prepend(banner);
+            }}
+        }}
 
         async function loadMatchedDomains() {{
             // Main-list highlighting is now rendered server-side to avoid extra network latency.
@@ -1400,31 +1434,69 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
         }}
 
-        function goHome() {{
-            fetch('{API_ENDPOINT}', {{
-                method: 'GET',
-                headers: {{ 'Authorization': {auth_header_json} || '' }}
-            }})
-            .then(r => r.text())
-            .then(h => {{ document.open(); document.write(h); document.close(); }})
-            .catch(() => {{ window.location.href = '{API_ENDPOINT}'; }});
+        async function goHome() {{
+            activeView = {{
+                name: 'home',
+                domain: ''
+            }};
+            const authHeader = {auth_header_json} || '';
+            try {{
+                const r = await fetch('{API_ENDPOINT}', {{
+                    method: 'GET',
+                    credentials: 'include',
+                    cache: 'no-store',
+                    headers: authHeader ? {{ 'Authorization': authHeader }} : {{}}
+                }});
+
+                if (!r.ok || r.redirected) {{
+                    throw new Error('Home reload was redirected or failed: ' + r.status);
+                }}
+
+                const h = await r.text();
+                document.open();
+                document.write(h);
+                document.close();
+            }} catch (err) {{
+                console.error('Failed to refresh home view.', err);
+                showRefreshError('Failed to refresh home view. Please try again.');
+            }}
         }}
 
-        async function refreshCurrentView() {{
-            if (activeView.name === 'domain' && activeView.domain) {{
-                domainDetailsCache.delete(activeView.domain);
-                domainPermutationsCache.delete(activeView.domain);
-                await showDomain(activeView.domain);
+        async function refreshCurrentView(event) {{
+            if (event) {{
+                event.preventDefault();
+                event.stopPropagation();
+            }}
+
+            if (refreshInFlight) {{
                 return;
             }}
 
-            if (activeView.name === 'permutations' && activeView.domain) {{
-                domainPermutationsCache.delete(activeView.domain);
-                await showPermutations(activeView.domain);
-                return;
-            }}
+            refreshInFlight = true;
+            setRefreshButtonsDisabled(true);
 
-            goHome();
+            try {{
+                if (activeView.name === 'domain' && activeView.domain) {{
+                    domainDetailsCache.delete(activeView.domain);
+                    domainPermutationsCache.delete(activeView.domain);
+                    await showDomain(activeView.domain);
+                    return;
+                }}
+
+                if (activeView.name === 'permutations' && activeView.domain) {{
+                    domainPermutationsCache.delete(activeView.domain);
+                    await showPermutations(activeView.domain);
+                    return;
+                }}
+
+                await goHome();
+            }} catch (err) {{
+                console.error('Refresh failed.', err);
+                showRefreshError('Refresh failed. Please try again.');
+            }} finally {{
+                refreshInFlight = false;
+                setRefreshButtonsDisabled(false);
+            }}
         }}
 
         function escapeHtml(value) {{
@@ -1655,6 +1727,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 permutations: 0
             }};
 
+            if (domainSectionsAbortController) {{
+                domainSectionsAbortController.abort();
+            }}
+            domainSectionsAbortController = new AbortController();
+            const requestController = domainSectionsAbortController;
+
             try {{
                 const response = await fetch('{API_ENDPOINT}', {{
                     method: 'POST',
@@ -1662,6 +1740,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                         'Content-Type': 'application/json',
                         'Authorization': authHeader || ''
                     }},
+                    signal: requestController.signal,
                     body: JSON.stringify({{ action: 'GetDomainSections', entry: domain }})
                 }});
 
@@ -1670,18 +1749,30 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 }}
 
                 const payload = await response.json();
+                if (domainSectionsAbortController !== requestController) {{
+                    return fallback;
+                }}
                 const permutations = Number(payload.permutations);
                 return {{
                     sections: payload.sections || fallback.sections,
                     permutations: Number.isFinite(permutations) ? permutations : 0
                 }};
-            }} catch (_err) {{
+            }} catch (err) {{
+                if (err && err.name === 'AbortError') {{
+                    return fallback;
+                }}
                 return fallback;
             }}
         }}
 
         async function fetchDomainPermutations(domain) {{
             const authHeader = {auth_header_json};
+
+            if (domainPermutationsAbortController) {{
+                domainPermutationsAbortController.abort();
+            }}
+            domainPermutationsAbortController = new AbortController();
+            const requestController = domainPermutationsAbortController;
 
             try {{
                 const response = await fetch('{API_ENDPOINT}', {{
@@ -1690,6 +1781,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                         'Content-Type': 'application/json',
                         'Authorization': authHeader || ''
                     }},
+                    signal: requestController.signal,
                     body: JSON.stringify({{ action: 'GetDomainPermutations', entry: domain }})
                 }});
 
@@ -1698,8 +1790,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 }}
 
                 const payload = await response.json();
+                if (domainPermutationsAbortController !== requestController) {{
+                    return [];
+                }}
                 return Array.isArray(payload.permutations) ? payload.permutations : [];
-            }} catch (_err) {{
+            }} catch (err) {{
+                if (err && err.name === 'AbortError') {{
+                    return [];
+                }}
                 return [];
             }}
         }}
@@ -1739,7 +1837,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
                 '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
-                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>' +
+                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>' +
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
@@ -1783,7 +1881,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             document.querySelector('main').innerHTML =
                 '<div class="card-actions">' +
                 '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
-                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>' +
+                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>' +
                 '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
                 '</div>' +
                 '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
@@ -1865,6 +1963,7 @@ def _render_result(message, success=True, authorization_header='', operation='su
         heading = 'Submission Successful' if success else 'Submission Failed'
     message_color = '#166534' if success else '#b42318'
     auth_header_json = json.dumps(authorization_header)
+    refresh_button = '' if success else '            <button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>\n'
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -1961,6 +2060,23 @@ def _render_result(message, success=True, authorization_header='', operation='su
         }}
 
         .logoff-button:hover {{
+            background: #f8fafc;
+        }}
+
+        .refresh-button {{
+            width: 34px;
+            height: 34px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #10233c;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+        }}
+
+        .refresh-button:hover {{
             background: #f8fafc;
         }}
 
@@ -2127,7 +2243,7 @@ def _render_result(message, success=True, authorization_header='', operation='su
     <main>
         <div class="card-actions">
             <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
-            <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
+{refresh_button}            <button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>
         </div>
         <img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">
         <h1>{heading}</h1>
@@ -2135,21 +2251,61 @@ def _render_result(message, success=True, authorization_header='', operation='su
         <a href="#" onclick="goHome(); return false;">Back</a>
     </main>
     <script>
+        function showRefreshError(message) {{
+            const existing = document.getElementById('refresh-error-banner');
+            if (existing) {{
+                existing.remove();
+            }}
+
+            const banner = document.createElement('div');
+            banner.id = 'refresh-error-banner';
+            banner.style.margin = '12px auto 0';
+            banner.style.maxWidth = '540px';
+            banner.style.padding = '10px 12px';
+            banner.style.border = '1px solid #f5c2c7';
+            banner.style.borderRadius = '10px';
+            banner.style.background = '#fff5f5';
+            banner.style.color = '#b42318';
+            banner.style.fontSize = '0.92rem';
+            banner.textContent = message || 'Failed to load home view. Please try again.';
+
+            const main = document.querySelector('main');
+            if (main && main.parentNode) {{
+                main.parentNode.insertBefore(banner, main);
+            }}
+        }}
+
         async function goHome() {{
             try {{
+                const authHeader = {auth_header_json} || '';
                 const response = await fetch('{API_ENDPOINT}', {{
                     method: 'GET',
-                    headers: {{
-                        'Authorization': {auth_header_json} || ''
-                    }}
+                    credentials: 'include',
+                    cache: 'no-store',
+                    headers: authHeader ? {{ 'Authorization': authHeader }} : {{}}
                 }});
+
+                if (!response.ok || response.redirected) {{
+                    throw new Error('Home reload was redirected or failed: ' + response.status);
+                }}
+
                 const responseHtml = await response.text();
                 document.open();
                 document.write(responseHtml);
                 document.close();
             }} catch (err) {{
-                window.location.href = '{API_ENDPOINT}';
+                console.error('Failed to load home view.', err);
+                showRefreshError('Failed to load home view. Please try again.');
             }}
+        }}
+
+        function refreshCurrentView(event) {{
+            if (event) {{
+                event.preventDefault();
+                event.stopPropagation();
+            }}
+
+            goHome();
         }}
 
         function toggleHelp() {{

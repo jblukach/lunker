@@ -554,18 +554,25 @@ class RenderFormTests(unittest.TestCase):
 
     def test_render_form_includes_refresh_button(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
-        self.assertIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>', html)
+        self.assertIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>', html)
 
     def test_render_form_toolbar_button_order_help_refresh_logoff(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
         help_index = html.index('<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>')
-        refresh_index = html.index('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView()">R</button>')
+        refresh_index = html.index('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>')
         logoff_index = html.index('<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>')
         self.assertTrue(help_index < refresh_index < logoff_index)
 
     def test_render_form_includes_refresh_current_view_logic(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
-        self.assertIn('async function refreshCurrentView() {', html)
+        self.assertIn('async function refreshCurrentView(event) {', html)
+        self.assertIn('event.preventDefault();', html)
+        self.assertIn('event.stopPropagation();', html)
+        self.assertIn('if (refreshInFlight) {', html)
+        self.assertIn('refreshInFlight = true;', html)
+        self.assertIn('setRefreshButtonsDisabled(true);', html)
+        self.assertIn('refreshInFlight = false;', html)
+        self.assertIn('setRefreshButtonsDisabled(false);', html)
         self.assertIn("if (activeView.name === 'domain' && activeView.domain) {", html)
         self.assertIn('domainDetailsCache.delete(activeView.domain);', html)
         self.assertIn('domainPermutationsCache.delete(activeView.domain);', html)
@@ -573,6 +580,58 @@ class RenderFormTests(unittest.TestCase):
         self.assertIn("if (activeView.name === 'permutations' && activeView.domain) {", html)
         self.assertIn('await showPermutations(activeView.domain);', html)
         self.assertIn('goHome();', html)
+
+    def test_render_form_refresh_error_banner_is_present(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('function showRefreshError(message) {', html)
+        self.assertIn("banner.id = 'refresh-error-banner';", html)
+        self.assertIn("banner.textContent = message || 'Refresh failed. Please try again.';", html)
+
+    def test_render_form_fetch_uses_abort_controller(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('domainSectionsAbortController = new AbortController();', html)
+        self.assertIn('domainPermutationsAbortController = new AbortController();', html)
+        self.assertIn('signal: requestController.signal,', html)
+        self.assertIn("if (err && err.name === 'AbortError') {", html)
+
+    def test_render_form_fetch_ignores_stale_response(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('if (domainSectionsAbortController !== requestController) {', html)
+        self.assertIn('if (domainPermutationsAbortController !== requestController) {', html)
+
+    def test_render_form_gohome_does_not_force_api_navigation_on_failure(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        self.assertIn('async function goHome() {', html)
+        self.assertIn("activeView = {", html)
+        self.assertIn("name: 'home',", html)
+        self.assertIn("domain: ''", html)
+        self.assertIn("console.error('Failed to refresh home view.'", html)
+        self.assertIn("showRefreshError('Failed to refresh home view. Please try again.');", html)
+        self.assertIn("const authHeader = \"token\" || '';", html)
+        self.assertIn("headers: authHeader ? { 'Authorization': authHeader } : {}", html)
+        self.assertIn("credentials: 'include'", html)
+        self.assertIn("cache: 'no-store'", html)
+        self.assertIn('if (!r.ok || r.redirected) {', html)
+        self.assertNotIn("window.location.href = 'https://", html)
+
+    def test_render_form_refresh_keeps_domain_view_active(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        domain_branch_index = html.index("if (activeView.name === 'domain' && activeView.domain) {")
+        show_domain_index = html.index('await showDomain(activeView.domain);')
+        permutations_branch_index = html.index("if (activeView.name === 'permutations' && activeView.domain) {")
+        go_home_index = html.index('await goHome();')
+
+        self.assertTrue(domain_branch_index < show_domain_index < permutations_branch_index < go_home_index)
+        self.assertIn('return;', html[show_domain_index:permutations_branch_index])
+
+    def test_render_form_refresh_keeps_permutations_view_active(self):
+        html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
+        permutations_branch_index = html.index("if (activeView.name === 'permutations' && activeView.domain) {")
+        show_permutations_index = html.index('await showPermutations(activeView.domain);')
+        go_home_index = html.index('await goHome();')
+
+        self.assertTrue(permutations_branch_index < show_permutations_index < go_home_index)
+        self.assertIn('return;', html[show_permutations_index:go_home_index])
 
     def test_render_form_dynamic_views_include_refresh_button(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
@@ -616,6 +675,51 @@ class RenderResultTests(unittest.TestCase):
         html = home_shared._render_result('<script>alert("xss")</script>', success=True, authorization_header='token')
         # Check that the malicious script in the message content is properly escaped
         self.assertIn('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;', html)
+
+    def test_render_result_success_submission_hides_refresh_button(self):
+        html = home_shared._render_result('Domain saved', success=True, authorization_header='token')
+        self.assertNotIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>', html)
+
+    def test_render_result_success_deletion_hides_refresh_button(self):
+        html = home_shared._render_result('example.com', success=True, authorization_header='token', operation='deletion')
+        self.assertNotIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>', html)
+
+    def test_render_result_failure_includes_refresh_button(self):
+        html = home_shared._render_result('Invalid domain', success=False, authorization_header='token')
+        self.assertIn('<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>', html)
+
+    def test_render_result_includes_refresh_button_styles(self):
+        html = home_shared._render_result('Domain saved', success=True, authorization_header='token')
+        self.assertIn('.refresh-button {', html)
+        self.assertIn('.refresh-button:hover {', html)
+
+    def test_render_result_refresh_stays_on_failure_result_view(self):
+        html = home_shared._render_result('Invalid domain', success=False, authorization_header='token')
+        self.assertIn('function refreshCurrentView(event) {', html)
+        self.assertIn('event.preventDefault();', html)
+        self.assertIn('event.stopPropagation();', html)
+        self.assertIn('goHome();', html)
+        self.assertNotIn('window.location.reload();', html)
+
+    def test_render_result_refresh_reuses_gohome_flow(self):
+        html = home_shared._render_result('Invalid domain', success=False, authorization_header='token')
+        refresh_index = html.index('function refreshCurrentView(event) {')
+        go_home_index = html.index('goHome();', refresh_index)
+
+        self.assertTrue(refresh_index < go_home_index)
+        self.assertNotIn('window.location.reload();', html[refresh_index:go_home_index])
+
+    def test_render_result_gohome_does_not_force_api_navigation_on_failure(self):
+        html = home_shared._render_result('Invalid domain', success=False, authorization_header='token')
+        self.assertIn("console.error('Failed to load home view.'", html)
+        self.assertIn('function showRefreshError(message) {', html)
+        self.assertIn("showRefreshError('Failed to load home view. Please try again.');", html)
+        self.assertIn("const authHeader = \"token\" || '';", html)
+        self.assertIn("headers: authHeader ? { 'Authorization': authHeader } : {}", html)
+        self.assertIn("credentials: 'include'", html)
+        self.assertIn("cache: 'no-store'", html)
+        self.assertIn('if (!response.ok || response.redirected) {', html)
+        self.assertNotIn("window.location.href = 'https://", html)
 
 
 class FetchUserIdentityTests(unittest.TestCase):
