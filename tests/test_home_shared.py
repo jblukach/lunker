@@ -19,6 +19,7 @@ GET_DOMAIN_SECTIONS = getattr(home_shared, '_get_domain_sections')
 class WebUiHandlerTests(unittest.TestCase):
     def setUp(self):
         os.environ['LUNKER_TABLE'] = 'lunker-table'
+        os.environ['POSSIBILITIES_TABLE'] = 'possibilities'
         home_shared.IDENTITY_CACHE.clear()
         home_shared.MATCHED_SLD_CACHE.clear()
         home_shared.SEARCH_FIELDS_CACHE.clear()
@@ -61,7 +62,8 @@ class WebUiHandlerTests(unittest.TestCase):
         expected_sections = {'suspect': {'openSourceIntelligence': [], 'domainsMonitorSubscription': []}}
 
         with patch.object(home_shared, '_get_domain_sections', return_value=expected_sections), \
-                patch.object(home_shared, '_get_permutation_count', return_value=7):
+            patch.object(home_shared, '_get_permutation_count', return_value=7), \
+            patch.object(home_shared, '_get_possibility_count', return_value=5):
             response = home_shared._handle_request(event, None)
 
         payload = json.loads(response['body'])
@@ -69,6 +71,7 @@ class WebUiHandlerTests(unittest.TestCase):
         self.assertEqual(response['headers']['Content-Type'], 'application/json; charset=utf-8')
         self.assertEqual(payload['sections'], expected_sections)
         self.assertEqual(payload['permutations'], 7)
+        self.assertEqual(payload['possibilities'], 5)
 
     def test_post_get_domain_sections_failure_falls_back(self):
         event = {
@@ -86,6 +89,7 @@ class WebUiHandlerTests(unittest.TestCase):
         payload = json.loads(response['body'])
         self.assertEqual(payload['sections'], {})
         self.assertEqual(payload['permutations'], 0)
+        self.assertEqual(payload['possibilities'], 0)
 
     def test_post_get_domain_sections_action_is_case_and_whitespace_insensitive(self):
         event = {
@@ -100,14 +104,171 @@ class WebUiHandlerTests(unittest.TestCase):
         expected_sections = {'suspect': {'openSourceIntelligence': [], 'domainsMonitorSubscription': []}}
 
         with patch.object(home_shared, '_get_domain_sections', return_value=expected_sections) as get_sections, \
-                patch.object(home_shared, '_get_permutation_count', return_value=3) as get_count:
+            patch.object(home_shared, '_get_permutation_count', return_value=3) as get_count, \
+            patch.object(home_shared, '_get_possibility_count', return_value=2) as get_possibility_count:
             response = home_shared._handle_request(event, None)
 
         payload = json.loads(response['body'])
         self.assertEqual(payload['sections'], expected_sections)
         self.assertEqual(payload['permutations'], 3)
+        self.assertEqual(payload['possibilities'], 2)
         get_sections.assert_called_once_with('example.com')
         get_count.assert_called_once_with('example.com')
+        get_possibility_count.assert_called_once_with('example.com')
+
+    def test_post_get_domain_possibilities_success(self):
+        event = {
+            'requestContext': {
+                'http': {
+                    'method': 'POST'
+                }
+            },
+            'body': json.dumps({'action': 'GetDomainPossibilities', 'entry': 'example.com'}),
+        }
+
+        with patch.object(home_shared, '_get_domain_possibilities', return_value=['alpha.com', 'beta.com']):
+            response = home_shared._handle_request(event, None)
+
+        payload = json.loads(response['body'])
+        self.assertEqual(payload['possibilities'], ['alpha.com', 'beta.com'])
+
+    def test_post_get_domain_possibilities_failure_falls_back(self):
+        event = {
+            'requestContext': {
+                'http': {
+                    'method': 'POST'
+                }
+            },
+            'body': json.dumps({'action': 'GetDomainPossibilities', 'entry': 'example.com'}),
+        }
+
+        with patch.object(home_shared, '_get_domain_possibilities', side_effect=TypeError('boom')):
+            response = home_shared._handle_request(event, None)
+
+        payload = json.loads(response['body'])
+        self.assertEqual(payload['possibilities'], [])
+
+    def test_get_domain_possibilities_queries_using_arn_identifier(self):
+        with patch.object(home_shared, '_resolve_table_identifiers', return_value=['arn:aws:dynamodb:us-east-1:123456789012:table/possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {'domain': {'S': 'alpha.com'}},
+                    {'fqdn': {'S': 'beta.com'}},
+                ]
+            }) as query:
+                possibilities = home_shared._get_domain_possibilities('example.com')
+
+        self.assertEqual(possibilities, ['alpha.com', 'beta.com'])
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['TableName'], 'possibilities')
+
+    def test_get_domain_possibilities_queries_by_pk_and_sk_prefix(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {'sk': {'S': 'LUNKER#example#alpha.com'}},
+                    {'name': {'S': 'beta.com'}},
+                    {'host': {'S': 'beta.com'}},
+                ]
+            }) as query:
+                possibilities = home_shared._get_domain_possibilities('example.com')
+
+        self.assertEqual(possibilities, ['alpha.com', 'beta.com'])
+        self.assertEqual(query.call_count, 1)
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['KeyConditionExpression'], 'pk = :pk AND begins_with(sk, :sk)')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':pk']['S'], 'LUNKER#')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':sk']['S'], 'LUNKER#example#')
+
+    def test_get_domain_possibilities_supports_anchor_row_list_values(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['arn:aws:dynamodb:us-east-1:111111111111:table/possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {
+                        'pk': {'S': 'LUNKER#'},
+                        'sk': {'S': 'LUNKER#phreesia#'},
+                        'poss': {'L': [{'S': 'phreesia-login.com'}, {'S': 'phreesia-secure.net'}]},
+                    }
+                ]
+            }) as query:
+                possibilities = home_shared._get_domain_possibilities('phreesia.com')
+
+        self.assertEqual(possibilities, ['phreesia-login.com', 'phreesia-secure.net'])
+        self.assertEqual(query.call_count, 1)
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':pk']['S'], 'LUNKER#')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':sk']['S'], 'LUNKER#phreesia#')
+
+    def test_get_domain_possibilities_supports_string_set_values(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {
+                        'pk': {'S': 'LUNKER#'},
+                        'sk': {'S': 'LUNKER#phreesia#'},
+                        'possibilities': {'SS': ['login.phreesia.com', 'secure.phreesia.com']},
+                    }
+                ]
+            }):
+                possibilities = home_shared._get_domain_possibilities('phreesia.com')
+
+        self.assertEqual(possibilities, ['login.phreesia.com', 'secure.phreesia.com'])
+
+    def test_get_domain_possibilities_supports_single_string_value(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {
+                        'pk': {'S': 'LUNKER#'},
+                        'sk': {'S': 'LUNKER#phreesia#single'},
+                        'value': {'S': 'portal.phreesia.com'},
+                    }
+                ]
+            }):
+                possibilities = home_shared._get_domain_possibilities('phreesia.com')
+
+        self.assertEqual(possibilities, ['portal.phreesia.com'])
+
+    def test_get_domain_possibilities_ignores_bare_labels(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']):
+            with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                'Items': [
+                    {
+                        'pk': {'S': 'LUNKER#'},
+                        'sk': {'S': 'LUNKER#phreesia#'},
+                        'poss': {'L': [{'S': 'portal'}, {'S': 'secure'}]},
+                    }
+                ]
+            }):
+                possibilities = home_shared._get_domain_possibilities('phreesia.com')
+
+        self.assertEqual(possibilities, [])
+
+    def test_resolve_exact_table_identifier_uses_raw_arn_only(self):
+        with patch.dict(os.environ, {'POSSIBILITIES_TABLE': 'arn:aws:dynamodb:us-east-2:123456789012:table/possibilities'}):
+            identifiers = home_shared._resolve_exact_table_identifier('POSSIBILITIES_TABLE', 'possibilities')
+
+        self.assertEqual(identifiers, ['arn:aws:dynamodb:us-east-2:123456789012:table/possibilities'])
+
+    def test_get_domain_possibilities_uses_local_table_name_with_arn_env(self):
+        table_arn = 'arn:aws:dynamodb:us-east-2:123456789012:table/possibilities'
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=[table_arn]), \
+                patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                    'Items': [
+                        {'domain': {'S': 'alpha.com'}},
+                    ]
+                }) as query:
+            possibilities = home_shared._get_domain_possibilities('example.com')
+
+        self.assertEqual(possibilities, ['alpha.com'])
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['TableName'], 'possibilities')
+
+    def test_get_possibility_count_uses_queried_results_length(self):
+        with patch.object(home_shared, '_get_domain_possibilities', return_value=['alpha.com', 'beta.com']):
+            count = home_shared._get_possibility_count('example.com')
+
+        self.assertEqual(count, 2)
 
     def test_post_get_domain_permutations_success(self):
         event = {
@@ -635,7 +796,7 @@ class RenderFormTests(unittest.TestCase):
 
     def test_render_form_dynamic_views_include_refresh_button(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})
-        self.assertEqual(html.count('<button class="refresh-button"'), 3)
+        self.assertEqual(html.count('<button class="refresh-button"'), 4)
 
     def test_render_form_header_highlight_checks_sld_before_permutations(self):
         html = home_shared._render_form('token', {'email': 'user@example.com', 'region': 'us-east-1'}, ['example.com'], {'example'})

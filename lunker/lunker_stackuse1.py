@@ -70,6 +70,11 @@ class LunkerStackUse1(Stack):
             parameter_name = '/account/webmonitor'
         )
 
+        webdb = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'webdb',
+            parameter_name = '/account/webdb'
+        )
+
     ### IAM ROLE ###
 
         role = _iam.Role(
@@ -138,6 +143,7 @@ class LunkerStackUse1(Stack):
             environment = dict(
                 LUNKER_TABLE = 'lunker',
                 PERMUTATION_TABLE = 'permutation',
+                POSSIBILITIES_TABLE = 'arn:aws:dynamodb:'+region+':'+webdb.string_value+':table/possibilities',
                 TLD_TABLE = 'tld',
                 CLIENTID_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:'+cognito.string_value+':secret:clientid',
                 WM_OSINT = 'arn:aws:dynamodb:'+region+':'+webmonitor.string_value+':table/osint',

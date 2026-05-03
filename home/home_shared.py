@@ -2,6 +2,7 @@ import base64
 import binascii
 import boto3
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import TypeDeserializer
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 import html
@@ -37,6 +38,7 @@ DYNAMODB_CONFIG = Config(
 )
 DYNAMODB_RESOURCE = boto3.resource('dynamodb', config=DYNAMODB_CONFIG)
 DYNAMODB_CLIENT = boto3.client('dynamodb', config=DYNAMODB_CONFIG)
+DYNAMODB_TYPE_DESERIALIZER = TypeDeserializer()
 TABLE_CACHE = {}
 
 
@@ -48,6 +50,38 @@ def _get_table(table_name):
     table = DYNAMODB_RESOURCE.Table(table_name)
     TABLE_CACHE[table_name] = table
     return table
+
+
+def _get_env_table(env_key, default_name):
+    return _get_table(_table_name_from_env(os.getenv(env_key, default_name)))
+
+
+def _deserialize_dynamodb_attribute(value):
+    if isinstance(value, dict) and len(value) == 1:
+        type_key = next(iter(value))
+        if type_key in {'S', 'N', 'B', 'BOOL', 'NULL', 'M', 'L', 'SS', 'NS', 'BS'}:
+            try:
+                return DYNAMODB_TYPE_DESERIALIZER.deserialize(value)
+            except (TypeError, ValueError):
+                pass
+
+    if isinstance(value, list):
+        return [_deserialize_dynamodb_attribute(entry) for entry in value]
+
+    if isinstance(value, dict):
+        return {key: _deserialize_dynamodb_attribute(entry) for key, entry in value.items()}
+
+    return value
+
+
+def _deserialize_dynamodb_item(item):
+    if not isinstance(item, dict):
+        return {}
+
+    return {
+        key: _deserialize_dynamodb_attribute(value)
+        for key, value in item.items()
+    }
 
 
 def _get_method(event):
@@ -382,6 +416,17 @@ def _resolve_table_identifiers(*env_keys):
     return identifiers
 
 
+def _resolve_exact_table_identifier(env_key, default_name=''):
+    raw_value = os.getenv(env_key, '').strip()
+    if raw_value:
+        return [raw_value]
+
+    if default_name:
+        return [default_name]
+
+    return []
+
+
 def _extract_domain_value(item, sld):
     if not isinstance(item, dict):
         return ''
@@ -668,7 +713,7 @@ def _get_domain_sections(domain):
     if not is_valid:
         return {}
 
-    sld, _ = _split_domain(normalized_domain)
+    sld, tld = _split_domain(normalized_domain)
     dynamodb_client = DYNAMODB_CLIENT
     suspect_domains = {
         'openSourceIntelligence': _load_section_domains(dynamodb_client, sld, 'WM_OSINT'),
@@ -696,9 +741,8 @@ def _get_permutation_count(domain):
     if not is_valid:
         return 0
 
-    sld, _ = _split_domain(normalized_domain)
-    permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
-    table = _get_table(permutation_table_name)
+    sld, tld = _split_domain(normalized_domain)
+    table = _get_env_table('PERMUTATION_TABLE', 'permutation')
 
     try:
         response = table.get_item(
@@ -734,9 +778,8 @@ def _get_domain_permutations(domain):
     if not is_valid:
         return []
 
-    sld, _ = _split_domain(normalized_domain)
-    permutation_table_name = os.getenv('PERMUTATION_TABLE', 'permutation')
-    table = _get_table(permutation_table_name)
+    sld, tld = _split_domain(normalized_domain)
+    table = _get_env_table('PERMUTATION_TABLE', 'permutation')
 
     try:
         response = table.get_item(
@@ -764,6 +807,98 @@ def _get_domain_permutations(domain):
             continue
         normalized_permutations.append(str(permutation))
     return normalized_permutations
+
+
+def _get_possibility_count(domain):
+    return len(_get_domain_possibilities(domain))
+
+
+def _get_domain_possibilities(domain):
+    normalized_domain = _normalize_domain(domain)
+    is_valid, _ = _validate_domain(normalized_domain)
+    if not is_valid:
+        return []
+
+    sld, _ = _split_domain(normalized_domain)
+    table_identifiers = _resolve_exact_table_identifier('POSSIBILITIES_TABLE', 'possibilities')
+    if not table_identifiers:
+        return []
+    table_names = [_table_name_from_env(identifier) for identifier in table_identifiers]
+    table_names = [name for name in table_names if name]
+    if not table_names:
+        return []
+
+    def _extract_possibility_domains(item):
+        if not isinstance(item, dict):
+            return []
+
+        extracted = []
+
+        for key in ('domain', 'fqdn', 'host', 'name'):
+            raw_value = item.get(key)
+            normalized_value = _normalize_domain(raw_value)
+            if normalized_value and '.' in normalized_value:
+                extracted.append(normalized_value)
+
+        for key in ('poss', 'possibilities', 'value', 'values', 'domains'):
+            raw_values = item.get(key)
+
+            if isinstance(raw_values, str):
+                candidates = [raw_values]
+            elif isinstance(raw_values, (list, tuple, set)):
+                candidates = list(raw_values)
+            else:
+                continue
+
+            for raw_value in candidates:
+                normalized_value = _normalize_domain(raw_value)
+                if normalized_value and '.' in normalized_value:
+                    extracted.append(normalized_value)
+
+        sk_value = item.get('sk')
+        if isinstance(sk_value, str):
+            for token in sk_value.split('#'):
+                normalized_token = _normalize_domain(token)
+                if normalized_token and '.' in normalized_token:
+                    extracted.append(normalized_token)
+
+        return extracted
+
+    def _query_possibilities(table_name):
+        possibilities = []
+        query_kwargs = {
+            'TableName': table_name,
+            'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': 'LUNKER#'},
+                ':sk': {'S': f'LUNKER#{sld}#'},
+            },
+        }
+
+        while True:
+            response = DYNAMODB_CLIENT.query(**query_kwargs)
+            for item in response.get('Items', []):
+                normalized_item = _deserialize_dynamodb_item(item)
+                possibilities.extend(_extract_possibility_domains(normalized_item))
+
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+        return sorted(set(possibilities))
+
+    for table_name in table_names:
+        try:
+            results = _query_possibilities(table_name)
+        except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
+            print(f'Possibility lookup failed for {normalized_domain} on table {table_name}: {exc}')
+            continue
+
+        if results:
+            return results
+
+    return []
 
 
 def _render_form(authorization_header, identity, domains=None, matched_slds=None):
@@ -1479,6 +1614,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 if (activeView.name === 'domain' && activeView.domain) {{
                     domainDetailsCache.delete(activeView.domain);
                     domainPermutationsCache.delete(activeView.domain);
+                    domainPossibilitiesCache.delete(activeView.domain);
                     await showDomain(activeView.domain);
                     return;
                 }}
@@ -1486,6 +1622,12 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 if (activeView.name === 'permutations' && activeView.domain) {{
                     domainPermutationsCache.delete(activeView.domain);
                     await showPermutations(activeView.domain);
+                    return;
+                }}
+
+                if (activeView.name === 'possibilities' && activeView.domain) {{
+                    domainPossibilitiesCache.delete(activeView.domain);
+                    await showPossibilities(activeView.domain);
                     return;
                 }}
 
@@ -1724,7 +1866,8 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const authHeader = {auth_header_json};
             const fallback = {{
                 sections: getEmptySections(),
-                permutations: 0
+                permutations: 0,
+                possibilities: 0
             }};
 
             if (domainSectionsAbortController) {{
@@ -1753,9 +1896,11 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                     return fallback;
                 }}
                 const permutations = Number(payload.permutations);
+                const possibilities = Number(payload.possibilities);
                 return {{
                     sections: payload.sections || fallback.sections,
-                    permutations: Number.isFinite(permutations) ? permutations : 0
+                    permutations: Number.isFinite(permutations) ? permutations : 0,
+                    possibilities: Number.isFinite(possibilities) ? possibilities : 0
                 }};
             }} catch (err) {{
                 if (err && err.name === 'AbortError') {{
@@ -1802,8 +1947,48 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
         }}
 
+        let domainPossibilitiesAbortController = null;
+
+        async function fetchDomainPossibilities(domain) {{
+            const authHeader = {auth_header_json};
+
+            if (domainPossibilitiesAbortController) {{
+                domainPossibilitiesAbortController.abort();
+            }}
+            domainPossibilitiesAbortController = new AbortController();
+            const requestController = domainPossibilitiesAbortController;
+
+            try {{
+                const response = await fetch('{API_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader || ''
+                    }},
+                    signal: requestController.signal,
+                    body: JSON.stringify({{ action: 'GetDomainPossibilities', entry: domain }})
+                }});
+
+                if (!response.ok) {{
+                    return [];
+                }}
+
+                const payload = await response.json();
+                if (domainPossibilitiesAbortController !== requestController) {{
+                    return [];
+                }}
+                return Array.isArray(payload.possibilities) ? payload.possibilities : [];
+            }} catch (err) {{
+                if (err && err.name === 'AbortError') {{
+                    return [];
+                }}
+                return [];
+            }}
+        }}
+
         const domainDetailsCache = new Map();
         const domainPermutationsCache = new Map();
+        const domainPossibilitiesCache = new Map();
 
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
@@ -1828,10 +2013,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             const safePermutations = Number.isFinite(domainDetails?.permutations)
                 ? domainDetails.permutations
                 : 0;
+            const safePossibilities = Number.isFinite(domainDetails?.possibilities)
+                ? domainDetails.possibilities
+                : 0;
 
             domainDetailsCache.set(domain, {{
                 sections: safeSections,
-                permutations: safePermutations
+                permutations: safePermutations,
+                possibilities: safePossibilities
             }});
 
             document.querySelector('main').innerHTML =
@@ -1844,6 +2033,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
                 '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
                 '<p style="margin:4px 0 0;"><strong>Permutations:</strong> <a class="inline-link" href="#" onclick="showPermutations(' + domainLiteral + '); return false;">' + String(safePermutations) + '</a></p>' +
+                '<p style="margin:4px 0 0;"><strong>Possibilities:</strong> <a class="inline-link" href="#" onclick="showPossibilities(' + domainLiteral + '); return false;">' + String(safePossibilities) + '</a></p>' +
                 '</div>' +
                 '<div style="text-align:center;">' +
                 '<a class="btn-primary" href="#" onclick="goHome(); return false;">Back</a>' +
@@ -1926,6 +2116,46 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }};
 
             renderPermutationsView(domain, permutations);
+        }}
+
+        function renderPossibilitiesView(domain, possibilities) {{
+            const safeDomain = escapeHtml(domain);
+            const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
+            const selectedSld = extractSld(domain);
+
+            document.querySelector('main').innerHTML =
+                '<div class="card-actions">' +
+                '<button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>' +
+                '<button class="refresh-button" type="button" title="Refresh Data" onclick="refreshCurrentView(event)">↺</button>' +
+                '<button class="logoff-button" type="button" title="Cognito Log Off" onclick="logOff()">X</button>' +
+                '</div>' +
+                '<img src="https://cdn.lukach.io/lunker.png" alt="Lunker Logo">' +
+                '<div style="text-align:center; margin: 8px 0 12px; line-height: 1.4;">' +
+                '<p style="margin:0;"><strong>Domain:</strong> ' + safeDomain + '</p>' +
+                '<p style="margin:4px 0 0;"><strong>Possibilities:</strong> ' + String(Array.isArray(possibilities) ? possibilities.length : 0) + '</p>' +
+                '</div>' +
+                '<div style="text-align:center; margin: 0 0 12px;">' +
+                '<a class="btn-primary" href="#" onclick="showDomain(' + domainLiteral + '); return false;">Back</a>' +
+                '</div>' +
+                '<div class="domain-sections">' +
+                '<h3>Possibilities</h3>' +
+                renderNumberedList(possibilities || [], true, selectedSld) +
+                '</div>';
+        }}
+
+        async function showPossibilities(domain) {{
+            let possibilities = domainPossibilitiesCache.get(domain);
+            if (!possibilities) {{
+                possibilities = await fetchDomainPossibilities(domain);
+                domainPossibilitiesCache.set(domain, possibilities);
+            }}
+
+            activeView = {{
+                name: 'possibilities',
+                domain,
+            }};
+
+            renderPossibilitiesView(domain, possibilities);
         }}
 
         function toggleHelp() {{
@@ -2378,15 +2608,18 @@ def _handle_request(event, _context):
             try:
                 sections = _get_domain_sections(payload.get('entry', ''))
                 permutations = _get_permutation_count(payload.get('entry', ''))
+                possibilities = _get_possibility_count(payload.get('entry', ''))
             except (BotoCoreError, ClientError, KeyError, TypeError, ValueError) as exc:
                 print(f'GetDomainSections failed: {exc}')
                 sections = {}
                 permutations = 0
+                possibilities = 0
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'sections': sections,
                     'permutations': permutations,
+                    'possibilities': possibilities,
                 }),
                 'headers': {
                     'Content-Type': 'application/json; charset=utf-8'
@@ -2403,6 +2636,22 @@ def _handle_request(event, _context):
                 'statusCode': 200,
                 'body': json.dumps({
                     'permutations': permutations,
+                }),
+                'headers': {
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
+            }
+
+        if normalized_action == 'getdomainpossibilities':
+            try:
+                possibilities = _get_domain_possibilities(payload.get('entry', ''))
+            except (BotoCoreError, ClientError, KeyError, TypeError, ValueError) as exc:
+                print(f'GetDomainPossibilities failed: {exc}')
+                possibilities = []
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'possibilities': possibilities,
                 }),
                 'headers': {
                     'Content-Type': 'application/json; charset=utf-8'
