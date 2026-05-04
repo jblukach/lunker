@@ -801,6 +801,8 @@ class RenderFormTests(unittest.TestCase):
         self.assertIn('await showDomain(activeView.domain);', html)
         self.assertIn("if (activeView.name === 'permutations' && activeView.domain) {", html)
         self.assertIn('await showPermutations(activeView.domain);', html)
+        self.assertIn("if (activeView.name === 'possibilities' && activeView.domain) {", html)
+        self.assertIn('await showPossibilities(activeView.domain);', html)
         self.assertIn('goHome();', html)
 
     def test_render_form_refresh_error_banner_is_present(self):

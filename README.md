@@ -11,7 +11,7 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 - **Saved-domain insights** — clicking a saved domain loads related suspect, new-registration, and expired-registration sections
 - **Matched-domain highlighting** — exact SLD containment matches are emphasized in red and permutation-based matches in orange; red takes precedence when both conditions apply
 - **Fast possibility counting** — domain details show a lightweight **Possibilities** count via DynamoDB `Select=COUNT`, while the full possibilities view remains de-duplicated and domain-focused
-- **In-session data refresh** — a refresh control updates home, domain-detail, and permutation views without requiring a full browser reload
+- **In-session data refresh** — a refresh control updates home, domain-detail, permutation, and possibilities views without requiring a full browser reload (including after add/remove workflows)
 - **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
 - **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
 
@@ -181,13 +181,19 @@ After sign-in, the home page:
 2. highlights exact SLD matches in **red** and permutation-based matches in **orange**
 3. lets the user add or remove a domain
 4. loads detailed domain sections on demand when a saved domain is clicked
-5. supports in-page refresh via the top-right **R** control (next to help/logout) so data can be reloaded without logging in again
+5. supports in-page refresh via the top-right **↺** control (next to help/logout) so data can be reloaded without logging in again
 
 Refresh behavior is view-aware:
 
 - On the home view, refresh reloads the latest domain list.
 - On a domain-details view, refresh clears cached section/permutation data and re-queries the backend.
 - On the permutations view, refresh re-fetches the current domain's permutation list.
+- On the possibilities view, refresh re-fetches the current domain's possibilities list.
+
+Refresh reliability note:
+
+- After add/remove success pages, selecting **Back** now re-initializes home-page refresh state correctly.
+- This prevents a stale script-state edge case where subsequent refresh actions on domain/permutations/possibilities could incorrectly route back to home.
 
 On the domain-details card, **Possibilities** is a fast record count (DynamoDB query `Select=COUNT`) for the current SLD prefix. Opening the Possibilities view still renders the fully extracted and de-duplicated domain list from those records.
 

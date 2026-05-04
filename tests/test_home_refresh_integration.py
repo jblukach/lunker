@@ -119,3 +119,274 @@ def test_back_then_refresh_stays_on_home_view(monkeypatch):
 
         context.close()
         browser.close()
+
+
+def test_refresh_stays_on_domain_permutations_and_possibilities_views(monkeypatch):
+    api_url = "https://api.test/lunker"
+    monkeypatch.setattr(home_shared, "API_ENDPOINT", api_url)
+    html = home_shared._render_form(
+        "token",
+        {"email": "user@example.com", "region": "us-east-1"},
+        ["example.com"],
+        {"example"},
+    )
+
+    with playwright.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover
+            pytest.skip(f"Chromium is not available for Playwright: {exc}")
+
+        context = browser.new_context()
+        page = context.new_page()
+
+        def handle_route(route):
+            request = route.request
+            if request.url != api_url:
+                route.continue_()
+                return
+
+            if request.method == "POST":
+                payload = json.loads(request.post_data or "{}")
+                action = payload.get("action")
+                if action == "GetDomainSections":
+                    route.fulfill(
+                        status=200,
+                        headers={"Content-Type": "application/json"},
+                        body=json.dumps(
+                            {
+                                "sections": _empty_sections_payload(),
+                                "permutations": 2,
+                                "possibilities": 2,
+                            }
+                        ),
+                    )
+                    return
+
+                if action == "GetDomainPermutations":
+                    route.fulfill(
+                        status=200,
+                        headers={"Content-Type": "application/json"},
+                        body=json.dumps(
+                            {
+                                "permutations": [
+                                    "example1.com",
+                                    "example2.com",
+                                ]
+                            }
+                        ),
+                    )
+                    return
+
+                if action == "GetDomainPossibilities":
+                    route.fulfill(
+                        status=200,
+                        headers={"Content-Type": "application/json"},
+                        body=json.dumps(
+                            {
+                                "possibilities": [
+                                    "example3.com",
+                                    "example4.com",
+                                ]
+                            }
+                        ),
+                    )
+                    return
+
+                route.fulfill(status=500, body="unexpected POST action")
+                return
+
+            if request.method == "GET":
+                route.fulfill(
+                    status=200,
+                    headers={"Content-Type": "text/html; charset=utf-8"},
+                    body=html,
+                )
+                return
+
+            route.fulfill(status=405, body="method not allowed")
+
+        page.route("**/*", handle_route)
+        page.set_content(html)
+
+        page.click("a[data-domain='example.com']")
+        page.wait_for_selector("text=Suspect Domains")
+        page.click("button.refresh-button")
+        page.wait_for_selector("text=Suspect Domains")
+
+        permutations_link = page.locator("p:has-text('Permutations:') a.inline-link")
+        permutations_link.click()
+        page.wait_for_selector("h3:has-text('Permutations')")
+        page.click("button.refresh-button")
+        page.wait_for_selector("h3:has-text('Permutations')")
+
+        page.click("a:has-text('Back')")
+        page.wait_for_selector("text=Suspect Domains")
+
+        possibilities_link = page.locator("p:has-text('Possibilities:') a.inline-link")
+        possibilities_link.click()
+        page.wait_for_selector("h3:has-text('Possibilities')")
+        page.click("button.refresh-button")
+        page.wait_for_selector("h3:has-text('Possibilities')")
+
+        context.close()
+        browser.close()
+
+
+def test_add_or_remove_then_refresh_stays_on_domain_related_views(monkeypatch):
+    api_url = "https://api.test/lunker"
+    monkeypatch.setattr(home_shared, "API_ENDPOINT", api_url)
+    form_html = home_shared._render_form(
+        "token",
+        {"email": "user@example.com", "region": "us-east-1"},
+        ["example.com"],
+        {"example"},
+    )
+    add_result_html = home_shared._render_result(
+        "Submission Successful",
+        success=True,
+        authorization_header="token",
+        operation="submission",
+    )
+    remove_result_html = home_shared._render_result(
+        "Deletion Successful",
+        success=True,
+        authorization_header="token",
+        operation="deletion",
+    )
+
+    with playwright.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover
+            pytest.skip(f"Chromium is not available for Playwright: {exc}")
+
+        for action_value, domain_value, success_text in (
+            ("PutItem", "newdomain.com", "Submission Successful"),
+            ("DeleteItem", "example.com", "Deletion Successful"),
+        ):
+            context = browser.new_context()
+            page = context.new_page()
+
+            def handle_route(route):
+                request = route.request
+                if request.url != api_url:
+                    route.continue_()
+                    return
+
+                if request.method == "GET":
+                    route.fulfill(
+                        status=200,
+                        headers={"Content-Type": "text/html; charset=utf-8"},
+                        body=form_html,
+                    )
+                    return
+
+                if request.method == "POST":
+                    payload = json.loads(request.post_data or "{}")
+                    action = payload.get("action")
+
+                    if action == "PutItem":
+                        route.fulfill(
+                            status=200,
+                            headers={"Content-Type": "text/html; charset=utf-8"},
+                            body=add_result_html,
+                        )
+                        return
+
+                    if action == "DeleteItem":
+                        route.fulfill(
+                            status=200,
+                            headers={"Content-Type": "text/html; charset=utf-8"},
+                            body=remove_result_html,
+                        )
+                        return
+
+                    if action == "GetDomainSections":
+                        route.fulfill(
+                            status=200,
+                            headers={"Content-Type": "application/json"},
+                            body=json.dumps(
+                                {
+                                    "sections": _empty_sections_payload(),
+                                    "permutations": 2,
+                                    "possibilities": 2,
+                                }
+                            ),
+                        )
+                        return
+
+                    if action == "GetDomainPermutations":
+                        route.fulfill(
+                            status=200,
+                            headers={"Content-Type": "application/json"},
+                            body=json.dumps(
+                                {
+                                    "permutations": [
+                                        "example1.com",
+                                        "example2.com",
+                                    ]
+                                }
+                            ),
+                        )
+                        return
+
+                    if action == "GetDomainPossibilities":
+                        route.fulfill(
+                            status=200,
+                            headers={"Content-Type": "application/json"},
+                            body=json.dumps(
+                                {
+                                    "possibilities": [
+                                        "example3.com",
+                                        "example4.com",
+                                    ]
+                                }
+                            ),
+                        )
+                        return
+
+                    route.fulfill(status=500, body="unexpected POST action")
+                    return
+
+                route.fulfill(status=405, body="method not allowed")
+
+            page.route("**/*", handle_route)
+            page.set_content(form_html)
+
+            page.fill("#entry", domain_value)
+            page.click(f"input[value='{action_value}']")
+            page.click("button:has-text('Submit')")
+            page.wait_for_selector(f"text={success_text}")
+
+            page.click("a:has-text('Back')")
+            page.wait_for_selector("#home-form")
+
+            page.click("a[data-domain='example.com']")
+            page.wait_for_selector("text=Suspect Domains")
+            page.click("button.refresh-button")
+            page.wait_for_selector("text=Suspect Domains")
+
+            permutations_link = page.locator("p:has-text('Permutations:') a.inline-link")
+            permutations_link.click()
+            page.wait_for_selector("h3:has-text('Permutations')")
+            page.click("button.refresh-button")
+            page.wait_for_selector("h3:has-text('Permutations')")
+
+            page.click("a:has-text('Back')")
+            page.wait_for_selector("text=Suspect Domains")
+
+            possibilities_link = page.locator("p:has-text('Possibilities:') a.inline-link")
+            possibilities_link.click()
+            page.wait_for_selector("h3:has-text('Possibilities')")
+            page.click("button.refresh-button")
+            page.wait_for_selector("h3:has-text('Possibilities')")
+
+            page.click("a:has-text('Back')")
+            page.wait_for_selector("text=Suspect Domains")
+            page.click("a:has-text('Back')")
+            page.wait_for_selector("#home-form")
+
+            context.close()
+
+        browser.close()

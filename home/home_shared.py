@@ -1534,14 +1534,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             return issues;
         }}
 
-        const initialDomains = {domains_json};
-        let activeView = {{
+        var initialDomains = {domains_json};
+        var activeView = {{
             name: 'home',
             domain: ''
         }};
-        let refreshInFlight = false;
-        let domainSectionsAbortController = null;
-        let domainPermutationsAbortController = null;
+        var refreshInFlight = false;
+        var domainSectionsAbortController = null;
+        var domainPermutationsAbortController = null;
 
         function setRefreshButtonsDisabled(disabled) {{
             document.querySelectorAll('.refresh-button').forEach((button) => {{
@@ -2003,7 +2003,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
         }}
 
-        let domainPossibilitiesAbortController = null;
+        var domainPossibilitiesAbortController = null;
 
         async function fetchDomainPossibilities(domain) {{
             const authHeader = {auth_header_json};
@@ -2042,9 +2042,9 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
         }}
 
-        const domainDetailsCache = new Map();
-        const domainPermutationsCache = new Map();
-        const domainPossibilitiesCache = new Map();
+        var domainDetailsCache = new Map();
+        var domainPermutationsCache = new Map();
+        var domainPossibilitiesCache = new Map();
 
         function renderDomainView(domain, domainDetails) {{
             const safeDomain = escapeHtml(domain);
@@ -2145,14 +2145,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         async function showDomain(domain) {{
-            const [domainDetails, permutationTerms] = await Promise.all([
-                domainDetailsCache.get(domain) || fetchDomainSections(domain),
-                getDomainPermutationTerms(domain),
-            ]);
             activeView = {{
                 name: 'domain',
                 domain,
             }};
+            const [domainDetails, permutationTerms] = await Promise.all([
+                domainDetailsCache.get(domain) || fetchDomainSections(domain),
+                getDomainPermutationTerms(domain),
+            ]);
             renderDomainView(domain, {{
                 ...domainDetails,
                 permutationTerms,
@@ -2160,16 +2160,15 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         async function showPermutations(domain) {{
+            activeView = {{
+                name: 'permutations',
+                domain,
+            }};
             let permutations = domainPermutationsCache.get(domain);
             if (!permutations) {{
                 permutations = await fetchDomainPermutations(domain);
                 domainPermutationsCache.set(domain, permutations);
             }}
-
-            activeView = {{
-                name: 'permutations',
-                domain,
-            }};
 
             renderPermutationsView(domain, permutations);
         }}
@@ -2200,6 +2199,10 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
         }}
 
         async function showPossibilities(domain) {{
+            activeView = {{
+                name: 'possibilities',
+                domain,
+            }};
             let possibilities = domainPossibilitiesCache.get(domain);
             if (!possibilities) {{
                 possibilities = await fetchDomainPossibilities(domain);
@@ -2207,11 +2210,6 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             }}
 
             const permutationTerms = await getDomainPermutationTerms(domain);
-
-            activeView = {{
-                name: 'possibilities',
-                domain,
-            }};
 
             renderPossibilitiesView(domain, possibilities, permutationTerms);
         }}
