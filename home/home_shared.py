@@ -427,6 +427,22 @@ def _resolve_exact_table_identifier(env_key, default_name=''):
     return []
 
 
+def _resolve_query_table_targets(env_key, default_name=''):
+    targets = []
+    identifiers = _resolve_exact_table_identifier(env_key, default_name)
+
+    for identifier in identifiers:
+        raw_identifier = (identifier or '').strip()
+        if raw_identifier and raw_identifier not in targets:
+            targets.append(raw_identifier)
+
+        parsed_name = _table_name_from_env(raw_identifier)
+        if parsed_name and parsed_name not in targets:
+            targets.append(parsed_name)
+
+    return targets
+
+
 def _extract_domain_value(item, sld):
     if not isinstance(item, dict):
         return ''
@@ -810,7 +826,51 @@ def _get_domain_permutations(domain):
 
 
 def _get_possibility_count(domain):
-    return len(_get_domain_possibilities(domain))
+    normalized_domain = _normalize_domain(domain)
+    is_valid, _ = _validate_domain(normalized_domain)
+    if not is_valid:
+        return 0
+
+    sld, _ = _split_domain(normalized_domain)
+    table_targets = _resolve_query_table_targets('POSSIBILITIES_TABLE', 'possibilities')
+    if not table_targets:
+        return 0
+
+    def _count_possibilities(table_target):
+        # Fast path: count matching records instead of materializing possibility values.
+        total = 0
+        query_kwargs = {
+            'TableName': table_target,
+            'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': 'LUNKER#'},
+                ':sk': {'S': f'LUNKER#{sld}#'},
+            },
+            'Select': 'COUNT',
+        }
+
+        while True:
+            response = DYNAMODB_CLIENT.query(**query_kwargs)
+            total += int(response.get('Count', 0) or 0)
+
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+        return total
+
+    for table_target in table_targets:
+        try:
+            count = _count_possibilities(table_target)
+        except (BotoCoreError, ClientError, KeyError, TypeError, ValueError) as exc:
+            print(f'Possibility count lookup failed for {normalized_domain} on table {table_target}: {exc}')
+            continue
+
+        if count > 0:
+            return count
+
+    return 0
 
 
 def _get_domain_possibilities(domain):
@@ -820,12 +880,8 @@ def _get_domain_possibilities(domain):
         return []
 
     sld, _ = _split_domain(normalized_domain)
-    table_identifiers = _resolve_exact_table_identifier('POSSIBILITIES_TABLE', 'possibilities')
-    if not table_identifiers:
-        return []
-    table_names = [_table_name_from_env(identifier) for identifier in table_identifiers]
-    table_names = [name for name in table_names if name]
-    if not table_names:
+    table_targets = _resolve_query_table_targets('POSSIBILITIES_TABLE', 'possibilities')
+    if not table_targets:
         return []
 
     def _extract_possibility_domains(item):
@@ -864,10 +920,10 @@ def _get_domain_possibilities(domain):
 
         return extracted
 
-    def _query_possibilities(table_name):
+    def _query_possibilities(table_target):
         possibilities = []
         query_kwargs = {
-            'TableName': table_name,
+            'TableName': table_target,
             'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk)',
             'ExpressionAttributeValues': {
                 ':pk': {'S': 'LUNKER#'},
@@ -888,11 +944,11 @@ def _get_domain_possibilities(domain):
 
         return sorted(set(possibilities))
 
-    for table_name in table_names:
+    for table_target in table_targets:
         try:
-            results = _query_possibilities(table_name)
+            results = _query_possibilities(table_target)
         except (BotoCoreError, ClientError, KeyError, TypeError) as exc:
-            print(f'Possibility lookup failed for {normalized_domain} on table {table_name}: {exc}')
+            print(f'Possibility lookup failed for {normalized_domain} on table {table_target}: {exc}')
             continue
 
         if results:
@@ -2118,7 +2174,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
             renderPermutationsView(domain, permutations);
         }}
 
-        function renderPossibilitiesView(domain, possibilities) {{
+        function renderPossibilitiesView(domain, possibilities, permutationTerms = []) {{
             const safeDomain = escapeHtml(domain);
             const domainLiteral = JSON.stringify(String(domain || '')).replace(/"/g, '&quot;');
             const selectedSld = extractSld(domain);
@@ -2139,7 +2195,7 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 '</div>' +
                 '<div class="domain-sections">' +
                 '<h3>Possibilities</h3>' +
-                renderNumberedList(possibilities || [], true, selectedSld) +
+                renderNumberedList(possibilities || [], true, selectedSld, permutationTerms) +
                 '</div>';
         }}
 
@@ -2150,12 +2206,14 @@ def _render_form(authorization_header, identity, domains=None, matched_slds=None
                 domainPossibilitiesCache.set(domain, possibilities);
             }}
 
+            const permutationTerms = await getDomainPermutationTerms(domain);
+
             activeView = {{
                 name: 'possibilities',
                 domain,
             }};
 
-            renderPossibilitiesView(domain, possibilities);
+            renderPossibilitiesView(domain, possibilities, permutationTerms);
         }}
 
         function toggleHelp() {{

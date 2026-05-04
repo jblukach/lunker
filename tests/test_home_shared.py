@@ -149,7 +149,8 @@ class WebUiHandlerTests(unittest.TestCase):
         self.assertEqual(payload['possibilities'], [])
 
     def test_get_domain_possibilities_queries_using_arn_identifier(self):
-        with patch.object(home_shared, '_resolve_table_identifiers', return_value=['arn:aws:dynamodb:us-east-1:123456789012:table/possibilities']):
+        table_arn = 'arn:aws:dynamodb:us-east-1:123456789012:table/possibilities'
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=[table_arn]):
             with patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
                 'Items': [
                     {'domain': {'S': 'alpha.com'}},
@@ -160,7 +161,7 @@ class WebUiHandlerTests(unittest.TestCase):
 
         self.assertEqual(possibilities, ['alpha.com', 'beta.com'])
         _, kwargs = query.call_args
-        self.assertEqual(kwargs['TableName'], 'possibilities')
+        self.assertEqual(kwargs['TableName'], table_arn)
 
     def test_get_domain_possibilities_queries_by_pk_and_sk_prefix(self):
         with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']):
@@ -250,7 +251,7 @@ class WebUiHandlerTests(unittest.TestCase):
 
         self.assertEqual(identifiers, ['arn:aws:dynamodb:us-east-2:123456789012:table/possibilities'])
 
-    def test_get_domain_possibilities_uses_local_table_name_with_arn_env(self):
+    def test_get_domain_possibilities_uses_arn_table_identifier_with_arn_env(self):
         table_arn = 'arn:aws:dynamodb:us-east-2:123456789012:table/possibilities'
         with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=[table_arn]), \
                 patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
@@ -262,13 +263,73 @@ class WebUiHandlerTests(unittest.TestCase):
 
         self.assertEqual(possibilities, ['alpha.com'])
         _, kwargs = query.call_args
-        self.assertEqual(kwargs['TableName'], 'possibilities')
+        self.assertEqual(kwargs['TableName'], table_arn)
 
-    def test_get_possibility_count_uses_queried_results_length(self):
-        with patch.object(home_shared, '_get_domain_possibilities', return_value=['alpha.com', 'beta.com']):
+    def test_get_possibility_count_uses_pk_and_sk_count_query(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']), \
+                patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                    'Count': 2,
+                    'Items': [
+                        {'sk': {'S': 'LUNKER#example#alpha.com'}},
+                        {'sk': {'S': 'LUNKER#example#beta.com'}},
+                    ]
+                }) as query:
             count = home_shared._get_possibility_count('example.com')
 
         self.assertEqual(count, 2)
+        self.assertEqual(query.call_count, 1)
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['TableName'], 'possibilities')
+        self.assertEqual(kwargs['Select'], 'COUNT')
+        self.assertEqual(kwargs['KeyConditionExpression'], 'pk = :pk AND begins_with(sk, :sk)')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':pk']['S'], 'LUNKER#')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':sk']['S'], 'LUNKER#example#')
+
+    def test_get_possibility_count_accumulates_paginated_counts(self):
+        first_page = {
+            'Count': 1,
+            'LastEvaluatedKey': {
+                'pk': {'S': 'LUNKER#'},
+                'sk': {'S': 'LUNKER#example#alpha.com'},
+            },
+        }
+        second_page = {
+            'Count': 2,
+        }
+
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']), \
+                patch.object(home_shared.DYNAMODB_CLIENT, 'query', side_effect=[first_page, second_page]) as query:
+            count = home_shared._get_possibility_count('example.com')
+
+        self.assertEqual(count, 3)
+        self.assertEqual(query.call_count, 2)
+        first_call = query.call_args_list[0].kwargs
+        second_call = query.call_args_list[1].kwargs
+        self.assertEqual(first_call['Select'], 'COUNT')
+        self.assertEqual(first_call['ExpressionAttributeValues'][':pk']['S'], 'LUNKER#')
+        self.assertEqual(first_call['ExpressionAttributeValues'][':sk']['S'], 'LUNKER#example#')
+        self.assertIn('ExclusiveStartKey', second_call)
+        self.assertEqual(second_call['ExclusiveStartKey'], first_page['LastEvaluatedKey'])
+
+    def test_get_possibility_count_prefers_fast_record_count_over_domain_materialization(self):
+        with patch.object(home_shared, '_resolve_exact_table_identifier', return_value=['possibilities']), \
+                patch.object(home_shared.DYNAMODB_CLIENT, 'query', return_value={
+                    'Count': 1,
+                    'Items': [
+                        {
+                            'pk': {'S': 'LUNKER#'},
+                            'sk': {'S': 'LUNKER#phreesia#'},
+                            'poss': {'L': [{'S': 'phreesia-login.com'}, {'S': 'phreesia-secure.net'}]},
+                        }
+                    ]
+                }) as query:
+            count = home_shared._get_possibility_count('phreesia.com')
+
+        self.assertEqual(count, 1)
+        _, kwargs = query.call_args
+        self.assertEqual(kwargs['Select'], 'COUNT')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':pk']['S'], 'LUNKER#')
+        self.assertEqual(kwargs['ExpressionAttributeValues'][':sk']['S'], 'LUNKER#phreesia#')
 
     def test_post_get_domain_permutations_success(self):
         event = {

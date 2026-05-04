@@ -10,6 +10,7 @@ Lunker is a multi-region AWS CDK application for registering second-level domain
 - **Threat intelligence enrichment** triggered automatically when a domain is registered
 - **Saved-domain insights** — clicking a saved domain loads related suspect, new-registration, and expired-registration sections
 - **Matched-domain highlighting** — exact SLD containment matches are emphasized in red and permutation-based matches in orange; red takes precedence when both conditions apply
+- **Fast possibility counting** — domain details show a lightweight **Possibilities** count via DynamoDB `Select=COUNT`, while the full possibilities view remains de-duplicated and domain-focused
 - **In-session data refresh** — a refresh control updates home, domain-detail, and permutation views without requiring a full browser reload
 - **Multi-region deployment** across `us-east-1`, `us-east-2`, and `us-west-2`
 - **GitHub Actions CI/CD via OIDC** with no long-lived AWS credentials
@@ -123,7 +124,7 @@ aws logs tail /aws/lambda/permutation --profile lunker --region us-east-2 --foll
 
 ## Local testing
 
-Unit tests currently focus on shared home-handler behavior.
+Test coverage currently focuses on shared home-handler behavior and in-session refresh integration paths.
 
 ```bash
 pytest -q
@@ -142,7 +143,7 @@ The stacks set most Lambda environment variables automatically at deploy time. T
 | Function | Key environment variables |
 | --- | --- |
 | `action` | `FUNCTION_NAME`, `PERMUTATION_FUNCTION_NAME` |
-| `home` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `TLD_TABLE`, `CLIENTID_SECRET_ARN`, `WM_OSINT`, `WM_MALWARE`, `WM_DAILYUPDATE`, `WM_WEEKLYUPDATE`, `WM_MONTHLYUPDATE`, `WM_DAILYREMOVE`, `WM_WEEKLYREMOVE`, `WM_MONTHLYREMOVE` |
+| `home` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `POSSIBILITIES_TABLE`, `TLD_TABLE`, `CLIENTID_SECRET_ARN`, `WM_OSINT`, `WM_MALWARE`, `WM_DAILYUPDATE`, `WM_WEEKLYUPDATE`, `WM_MONTHLYUPDATE` (or fallback `WM_MONTHLY`), `WM_DAILYREMOVE`, `WM_WEEKLYREMOVE`, `WM_MONTHLYREMOVE` |
 | `permutation` | `LUNKER_TABLE`, `PERMUTATION_TABLE`, `LUNKER_INDEX` (defaults to `pk-tk-index`), `PERMUTATION_TTL_DAYS` (defaults to `30`) |
 | `tld` | `TLD_TABLE` |
 
@@ -187,6 +188,8 @@ Refresh behavior is view-aware:
 - On a domain-details view, refresh clears cached section/permutation data and re-queries the backend.
 - On the permutations view, refresh re-fetches the current domain's permutation list.
 
+On the domain-details card, **Possibilities** is a fast record count (DynamoDB query `Select=COUNT`) for the current SLD prefix. Opening the Possibilities view still renders the fully extracted and de-duplicated domain list from those records.
+
 To keep the page responsive, the home handlers reuse HTTP connections and cache short-lived identity and highlight lookups during warm Lambda invocations.
 
 ## Project structure
@@ -210,6 +213,7 @@ home/
 permutation/
   permutation.py          # Domain permutation Lambda handler
 tests/
+  test_home_refresh_integration.py # Integration tests for view-aware in-page refresh
   test_home_shared.py     # Unit tests for shared home logic
 tld/
   tld.py                  # IANA TLD sync Lambda handler
