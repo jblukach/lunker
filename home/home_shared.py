@@ -288,8 +288,8 @@ def _put_lunker_domain(table, email, domain):
     table.put_item(
         Item={
             'pk': 'LUNKER#',
-            'sk': f'LUNKER#{email}#{domain}',
-            'tk': f'LUNKER#{sld}#{email}#{domain}',
+            'sk': f'LUNKER#{email}#{domain}#',
+            'tk': f'LUNKER#{sld}#{email}#{domain}#',
             'domain': domain,
             'email': email,
             'sld': sld,
@@ -302,7 +302,7 @@ def _delete_lunker_domain(table, email, domain):
     table.delete_item(
         Key={
             'pk': 'LUNKER#',
-            'sk': f'LUNKER#{email}#{domain}',
+            'sk': f'LUNKER#{email}#{domain}#',
         }
     )
 
@@ -764,7 +764,7 @@ def _get_permutation_count(domain):
         response = table.get_item(
             Key={
                 'pk': 'LUNKER#',
-                'sk': f'LUNKER#{sld}',
+                'sk': f'LUNKER#{sld}#',
             },
             ProjectionExpression='#count',
             ExpressionAttributeNames={
@@ -801,7 +801,7 @@ def _get_domain_permutations(domain):
         response = table.get_item(
             Key={
                 'pk': 'LUNKER#',
-                'sk': f'LUNKER#{sld}',
+                'sk': f'LUNKER#{sld}#',
             },
             ProjectionExpression='#perm',
             ExpressionAttributeNames={

@@ -38,7 +38,8 @@ The application is deployed as five CDK stacks:
 
 - **`lunker`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; stores user-to-domain mappings; enables PITR and deletion protection; includes a `pk-tk-index` GSI used by the permutation Lambda and an `email-domain-index` GSI used by the home workflow; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
 - **`tld`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; used by home and tld workflows for top-level-domain validation data; enables PITR and deletion protection; org-wide read access (`DescribeTable`, `GetItem`, `Query`) is granted via a resource policy
-- **`permutation`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; key pattern `pk = LUNKER#` and `sk = LUNKER#<sld>`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
+- **`permutation`** — global DynamoDB table with its primary region in `us-east-2` and replicas in `us-east-1` and `us-west-2`; key pattern `pk = LUNKER#` and `sk = LUNKER#<SLD>#`; stores `sld`, `perm`, `count`, and TTL via `ttl`; enables PITR and deletion protection; org-wide read access is granted via a resource policy
+- **`lunker`** key schema: `pk = LUNKER#`, `sk = LUNKER#<EMAIL>#<DOMAIN>#`, `tk (GSI sort key) = LUNKER#<SLD>#<EMAIL>#<DOMAIN>#`
 
 ## Prerequisites
 

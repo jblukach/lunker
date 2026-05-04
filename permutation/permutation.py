@@ -216,7 +216,7 @@ def _write_permutations(sld, permutations):
     _PERMUTATION.put_item(
         Item={
             'pk': 'LUNKER#',
-            'sk': f'LUNKER#{sld}',
+            'sk': f'LUNKER#{sld}#',
             'sld': sld,
             'perm': permutations,
             'count': len(permutations),
